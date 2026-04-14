@@ -1,0 +1,59 @@
+/*
+ * cpu.bt -- CPU Utilization (V5 bpftrace)
+ *
+ * IntP metric: cpu (CPU utilization)
+ * Equivalent to: print_cpu_report() in v1-original/intp.stp
+ *
+ * Probe:
+ *   tracepoint:sched:sched_switch -- fired on every context switch
+ *
+ * For each context switch, we know:
+ *   - args->prev_pid: PID being switched out
+ *   - args->next_pid: PID being switched in
+ *
+ * By timestamping when a PID is switched in and measuring the delta when
+ * it is switched out, we get the exact CPU time consumed per PID.
+ *
+ * Formula:
+ *   cpu_time[pid] = sum of all on-CPU intervals in the sampling period
+ *   utilization = cpu_time[target_pid] / (interval_ns * num_cpus) * 100
+ *
+ * The original intp.stp uses the same sched_switch tracepoint.
+ *
+ * Usage: sudo bpftrace cpu.bt
+ */
+
+/* TODO: Accept target PID as $1 parameter */
+
+BEGIN
+{
+    printf("cpu: monitoring CPU utilization\n");
+}
+
+tracepoint:sched:sched_switch
+{
+    /* TODO: Measure CPU time for the process being switched out */
+    /* $prev = args->prev_pid; */
+    /* $next = args->next_pid; */
+
+    /* Record time spent by prev_pid */
+    /* if (@on_cpu[$prev] > 0) { */
+    /*     @cpu_ns[$prev] = sum(nsecs - @on_cpu[$prev]); */
+    /*     delete(@on_cpu[$prev]); */
+    /* } */
+
+    /* Mark next_pid as on-CPU */
+    /* @on_cpu[$next] = nsecs; */
+}
+
+interval:s:1
+{
+    /* TODO: Print CPU utilization for target PID */
+    /* TODO: Reset counters */
+}
+
+END
+{
+    /* TODO: Clean up maps */
+    /* clear(@on_cpu); clear(@cpu_ns); */
+}

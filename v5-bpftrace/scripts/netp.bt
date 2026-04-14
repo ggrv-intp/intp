@@ -1,0 +1,58 @@
+/*
+ * netp.bt -- Network Physical Utilization (V5 bpftrace)
+ *
+ * IntP metric: netp (network physical utilization)
+ * Equivalent to: print_netphy_report() in v1-original/intp.stp
+ *
+ * Probes:
+ *   tracepoint:net:netif_receive_skb -- fired for each received packet
+ *   tracepoint:net:net_dev_xmit      -- fired for each transmitted packet
+ *
+ * These tracepoints provide the packet length (skb->len), which we
+ * accumulate over the sampling interval and normalize to NIC speed.
+ *
+ * The original intp.stp uses the same tracepoints.
+ *
+ * Formula:
+ *   delta_bytes = @rx_bytes + @tx_bytes (accumulated over interval)
+ *   utilization = delta_bytes / (nic_speed_bytes_sec * interval_sec) * 100
+ *
+ * Constant: 125000000 = 1 Gbps in bytes/sec (same as original intp.stp)
+ *
+ * Usage: sudo bpftrace netp.bt
+ */
+
+/* TODO: Make NIC speed configurable via $1 parameter */
+
+BEGIN
+{
+    printf("netp: monitoring network physical utilization\n");
+}
+
+tracepoint:net:netif_receive_skb
+{
+    /* TODO: Filter by target PID if needed */
+    @rx_bytes = sum(args->len);
+}
+
+tracepoint:net:net_dev_xmit
+{
+    /* TODO: Filter by target PID if needed */
+    @tx_bytes = sum(args->len);
+}
+
+interval:s:1
+{
+    /* TODO: Compute utilization */
+    /* $total = @rx_bytes + @tx_bytes; */
+    /* $util = $total * 100 / 125000000;  // assuming 1 Gbps */
+    /* printf("netp: %lld bytes, ~%lld%% utilization\n", $total, $util); */
+    /* clear(@rx_bytes); */
+    /* clear(@tx_bytes); */
+}
+
+END
+{
+    clear(@rx_bytes);
+    clear(@tx_bytes);
+}
