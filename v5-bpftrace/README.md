@@ -21,15 +21,15 @@ and kfuncs. Hardware metrics (mbw, llcocc) are collected via the resctrl
 filesystem using the same helper as V3/V4. The llcmr metric uses bpftrace's
 hardware event support.
 
-| Metric | Collection Method |
-|--------|-------------------|
-| netp   | tracepoint:net:netif_receive_skb + net:net_dev_xmit |
-| nets   | kfunc:__dev_queue_xmit + kfunc:napi_complete_done |
-| blk    | tracepoint:block:block_rq_complete |
-| mbw    | resctrl (shared/intp-resctrl-helper.sh) |
-| llcmr  | hardware:cache-misses / hardware:cache-references |
-| llcocc | resctrl (shared/intp-resctrl-helper.sh) |
-| cpu    | tracepoint:sched:sched_switch |
+| Metric | Collection Method                                       |
+|--------|------------------------------------------------------- -|
+| netp   | tracepoint:net:netif_receive_skb + net:net_dev_xmit    |
+| nets   | kfunc:__dev_queue_xmit + kfunc:napi_complete_done      |
+| blk    | tracepoint:block:block_rq_complete                     |
+| mbw    | resctrl (shared/intp-resctrl-helper.sh)                |
+| llcmr  | hardware:cache-misses / hardware:cache-references      |
+| llcocc | resctrl (shared/intp-resctrl-helper.sh)                |
+| cpu    | tracepoint:sched:sched_switch                          |
 
 ## bpftrace vs SystemTap Comparison
 

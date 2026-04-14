@@ -23,6 +23,7 @@ the embedded C functions, the normalization formula, and any hardcoded constants
 
 > TODO: Populate from the line-by-line analysis of intp.stp.
 > Each metric section should include:
+>
 > - SystemTap probe points used
 > - Embedded C function names and their kernel API calls
 > - Raw value collection method

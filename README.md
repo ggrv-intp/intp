@@ -41,7 +41,7 @@ x = supported, ~ = polling approximation, empty = not supported
 
 ## Directory Layout
 
-```
+```text
 .
 |-- README.md                  This file
 |-- LICENSE                    MIT license

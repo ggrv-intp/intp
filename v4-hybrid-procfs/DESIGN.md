@@ -19,7 +19,7 @@ user-space monitoring.
 
 ## Architecture
 
-```
+```text
 +------------------+
 | intp-hybrid.c    |  Main: arg parsing, polling loop, output formatting
 +------------------+
@@ -37,6 +37,7 @@ user-space monitoring.
 ```
 
 The main loop:
+
 1. Read current values from all metric sources
 2. Sleep for the configured interval
 3. Read values again
@@ -47,13 +48,13 @@ The main loop:
 ## Interface Stability
 
 | Interface              | Stable since | ABI guarantee    |
-|------------------------|-------------|------------------|
-| /proc/stat             | Linux 1.0   | Stable ABI       |
-| /proc/diskstats        | Linux 2.6   | Stable ABI       |
-| /proc/net/dev          | Linux 1.0   | Stable ABI       |
-| /sys/class/net/*/      | Linux 2.6   | Stable sysfs ABI |
-| perf_event_open()      | Linux 2.6.31| Stable syscall   |
-| /sys/fs/resctrl/       | Linux 4.10  | Stable ABI       |
+|------------------------|------------- |------------------|
+| /proc/stat             | Linux 1.0    | Stable ABI       |
+| /proc/diskstats        | Linux 2.6    | Stable ABI       |
+| /proc/net/dev          | Linux 1.0    | Stable ABI       |
+| /sys/class/net/*/      | Linux 2.6    | Stable sysfs ABI |
+| perf_event_open()      | Linux 2.6.31 | Stable syscall   |
+| /sys/fs/resctrl/       | Linux 4.10   | Stable ABI       |
 
 ## Tradeoff Analysis: Polling vs Event-Driven
 
