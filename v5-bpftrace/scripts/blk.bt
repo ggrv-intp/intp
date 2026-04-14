@@ -1,0 +1,59 @@
+/*
+ * blk.bt -- Block I/O Utilization (V5 bpftrace)
+ *
+ * IntP metric: blk (block I/O utilization)
+ * Equivalent to: print_block_report() in v1-original/intp.stp
+ *
+ * Probes:
+ *   tracepoint:block:block_rq_issue    -- I/O request dispatched to driver
+ *   tracepoint:block:block_rq_complete -- I/O request completed by driver
+ *
+ * Service time = completion timestamp - issue timestamp
+ * Utilization = sum(service_times) / interval * 100
+ *
+ * The original intp.stp uses the same block tracepoints.
+ *
+ * Alternative approach (simpler, matches V4):
+ *   tracepoint:block:block_rq_complete { @srv_time = avg(args->nr_sector); }
+ *   But this gives average sector count, not utilization. The proper approach
+ *   timestamps issue/complete pairs.
+ *
+ * Usage: sudo bpftrace blk.bt
+ */
+
+BEGIN
+{
+    printf("blk: monitoring block I/O utilization\n");
+}
+
+tracepoint:block:block_rq_issue
+{
+    /* TODO: Store issue timestamp keyed by request pointer */
+    /* @start[args->sector] = nsecs; */
+}
+
+tracepoint:block:block_rq_complete
+{
+    /* TODO: Compute service time */
+    /* $start = @start[args->sector]; */
+    /* if ($start > 0) { */
+    /*     @blk_service_ns = sum(nsecs - $start); */
+    /*     @blk_count = count(); */
+    /*     delete(@start[args->sector]); */
+    /* } */
+
+    /* TODO: Also track sector count for throughput */
+    /* @blk_sectors = sum(args->nr_sector); */
+}
+
+interval:s:1
+{
+    /* TODO: Compute utilization from accumulated service time */
+    /* TODO: Print and reset counters */
+}
+
+END
+{
+    /* TODO: Clean up maps */
+    /* clear(@start); */
+}

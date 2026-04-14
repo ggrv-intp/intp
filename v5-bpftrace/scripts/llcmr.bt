@@ -1,0 +1,59 @@
+/*
+ * llcmr.bt -- LLC Miss Ratio (V5 bpftrace)
+ *
+ * IntP metric: llcmr (Last-Level Cache miss ratio)
+ * Equivalent to: print_cache_report() in v1-original/intp.stp
+ *
+ * Probes:
+ *   hardware:cache-misses:1000000    -- sampled every 1M cache misses
+ *   hardware:cache-references:1000000 -- sampled every 1M cache references
+ *
+ * bpftrace supports hardware performance counter events via the "hardware:"
+ * probe type. The number after the event name is the sampling period.
+ *
+ * Formula:
+ *   miss_ratio = (@misses * 100) / @refs
+ *   If @refs == 0, miss_ratio = 0
+ *
+ * Note: hardware event sampling gives an approximation. The sampling period
+ * (1000000) means the probe fires once per million events. The count()
+ * aggregation counts how many times the probe fired, so:
+ *   actual_misses ~= @miss_count * 1000000
+ *   actual_refs   ~= @ref_count * 1000000
+ *   miss_ratio    = @miss_count / @ref_count * 100
+ * (The sampling period cancels out in the ratio.)
+ *
+ * The original intp.stp uses perf_event counters for the same hardware
+ * events but reads exact counts rather than sampling.
+ *
+ * Usage: sudo bpftrace llcmr.bt
+ */
+
+BEGIN
+{
+    printf("llcmr: monitoring LLC miss ratio\n");
+}
+
+/* TODO: Hardware event probes */
+/* hardware:cache-misses:1000000 */
+/* { */
+/*     @misses = count(); */
+/* } */
+
+/* hardware:cache-references:1000000 */
+/* { */
+/*     @refs = count(); */
+/* } */
+
+interval:s:1
+{
+    /* TODO: Compute miss ratio */
+    /* TODO: The sampling period cancels out: ratio = misses/refs * 100 */
+    /* TODO: Print and reset */
+}
+
+END
+{
+    /* TODO: Clean up */
+    /* clear(@misses); clear(@refs); */
+}

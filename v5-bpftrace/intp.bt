@@ -1,0 +1,143 @@
+/*
+ * intp.bt -- IntP Combined bpftrace Script (V5)
+ *
+ * Collects all software-based IntP metrics in a single bpftrace script:
+ *   - netp: Network physical utilization (tracepoint:net)
+ *   - nets: Network stack service time (kfunc + tracepoint)
+ *   - blk:  Block I/O utilization (tracepoint:block)
+ *   - cpu:  CPU utilization (tracepoint:sched)
+ *   - llcmr: LLC miss ratio (hardware events)
+ *
+ * Hardware metrics (mbw, llcocc) are NOT in this script -- they require
+ * resctrl filesystem reads, handled by run-intp-bpftrace.sh.
+ *
+ * Usage: sudo bpftrace intp.bt
+ *
+ * Equivalent to: sudo stap -g intp.stp (software metrics only)
+ */
+
+/* TODO: Add target PID filtering via $1 parameter */
+/* TODO: Add interval configuration via $2 parameter */
+
+BEGIN
+{
+    printf("IntP bpftrace profiler starting...\n");
+    /* TODO: Initialize interval timer */
+    /* TODO: Store start timestamp */
+}
+
+/*
+ * netp -- Network Physical Utilization
+ * Equivalent to: print_netphy_report() in v1-original/intp.stp
+ */
+tracepoint:net:netif_receive_skb
+{
+    /* TODO: Accumulate received bytes */
+    /* @rx_bytes = sum(args->len); */
+}
+
+tracepoint:net:net_dev_xmit
+{
+    /* TODO: Accumulate transmitted bytes */
+    /* @tx_bytes = sum(args->len); */
+}
+
+/*
+ * nets -- Network Stack Service Time
+ * Equivalent to: print_netstack_report() in v1-original/intp.stp
+ *
+ * TX path: timestamp at queue entry, measure at xmit completion
+ * RX path: timestamp at NAPI schedule, measure at NAPI completion
+ */
+
+/* TODO: TX service time */
+/* kfunc:__dev_queue_xmit */
+/* { */
+/*     @tx_start[tid] = nsecs; */
+/* } */
+
+/* tracepoint:net:net_dev_xmit */
+/* { */
+/*     $start = @tx_start[tid]; */
+/*     if ($start > 0) { */
+/*         @tx_service_ns = sum(nsecs - $start); */
+/*         delete(@tx_start[tid]); */
+/*     } */
+/* } */
+
+/* TODO: RX service time */
+/* kfunc:__napi_schedule_irqoff */
+/* { */
+/*     @rx_start[tid] = nsecs; */
+/* } */
+
+/* kfunc:napi_complete_done */
+/* { */
+/*     $start = @rx_start[tid]; */
+/*     if ($start > 0) { */
+/*         @rx_service_ns = sum(nsecs - $start); */
+/*         delete(@rx_start[tid]); */
+/*     } */
+/* } */
+
+/*
+ * blk -- Block I/O Utilization
+ * Equivalent to: print_block_report() in v1-original/intp.stp
+ */
+tracepoint:block:block_rq_complete
+{
+    /* TODO: Track I/O completion for utilization */
+    /* @blk_sectors = sum(args->nr_sector); */
+}
+
+/*
+ * cpu -- CPU Utilization
+ * Equivalent to: print_cpu_report() in v1-original/intp.stp
+ */
+tracepoint:sched:sched_switch
+{
+    /* TODO: Track per-PID CPU time */
+    /* $prev_pid = args->prev_pid; */
+    /* $next_pid = args->next_pid; */
+    /* if (@cpu_start[$prev_pid] > 0) { */
+    /*     @cpu_time[$prev_pid] = sum(nsecs - @cpu_start[$prev_pid]); */
+    /* } */
+    /* @cpu_start[$next_pid] = nsecs; */
+}
+
+/*
+ * llcmr -- LLC Miss Ratio
+ * Equivalent to: print_cache_report() in v1-original/intp.stp
+ *
+ * Uses hardware event sampling. The ratio is computed from accumulated
+ * counts in the interval timer below.
+ */
+
+/* TODO: Hardware event probes */
+/* hardware:cache-misses:1000000 */
+/* { */
+/*     @cache_misses = count(); */
+/* } */
+
+/* hardware:cache-references:1000000 */
+/* { */
+/*     @cache_refs = count(); */
+/* } */
+
+/*
+ * Interval timer -- output metrics and reset counters
+ */
+interval:s:1
+{
+    /* TODO: Compute and print all metrics */
+    /* TODO: Reset counters for next interval */
+    /* printf("netp=%.2f nets=%.2f blk=%.2f llcmr=%.2f cpu=%.2f\n", ...); */
+    /* clear(@rx_bytes); clear(@tx_bytes); ... */
+}
+
+END
+{
+    /* TODO: Clean up maps */
+    printf("IntP bpftrace profiler stopped.\n");
+    /* clear(@tx_start); clear(@rx_start); clear(@cpu_start); */
+}

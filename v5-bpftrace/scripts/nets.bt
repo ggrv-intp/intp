@@ -1,0 +1,79 @@
+/*
+ * nets.bt -- Network Stack Service Time (V5 bpftrace)
+ *
+ * IntP metric: nets (network stack utilization / service time)
+ * Equivalent to: print_netstack_report() in v1-original/intp.stp
+ *
+ * TX path probes:
+ *   kfunc:__dev_queue_xmit         -- entry: packet enters TX queue
+ *   tracepoint:net:net_dev_xmit    -- exit: packet transmitted by driver
+ *   Service time = net_dev_xmit timestamp - __dev_queue_xmit timestamp
+ *
+ * RX path probes:
+ *   kfunc:__napi_schedule_irqoff   -- entry: NAPI poll scheduled (NIC IRQ)
+ *   kfunc:napi_complete_done       -- exit: NAPI poll completed
+ *   Service time = napi_complete_done timestamp - __napi_schedule timestamp
+ *
+ * The original intp.stp uses similar probe points to measure the time
+ * packets spend in the kernel networking stack. bpftrace provides
+ * equivalent per-packet timestamping via kfunc probes.
+ *
+ * Formula:
+ *   total_service_time_ns = sum of all per-packet service times in interval
+ *   utilization = total_service_time_ns / (interval_ns * num_cpus) * 100
+ *
+ * Usage: sudo bpftrace nets.bt
+ */
+
+BEGIN
+{
+    printf("nets: monitoring network stack service time\n");
+}
+
+/* TX path: measure time from queue to transmit */
+kfunc:__dev_queue_xmit
+{
+    /* TODO: Store entry timestamp per thread */
+    /* @tx_start[tid] = nsecs; */
+}
+
+tracepoint:net:net_dev_xmit
+{
+    /* TODO: Compute TX service time */
+    /* $start = @tx_start[tid]; */
+    /* if ($start > 0) { */
+    /*     @tx_total_ns = sum(nsecs - $start); */
+    /*     @tx_count = count(); */
+    /*     delete(@tx_start[tid]); */
+    /* } */
+}
+
+/* RX path: measure NAPI processing time */
+kfunc:__napi_schedule_irqoff
+{
+    /* TODO: Store NAPI schedule timestamp */
+    /* @rx_start[tid] = nsecs; */
+}
+
+kfunc:napi_complete_done
+{
+    /* TODO: Compute RX service time */
+    /* $start = @rx_start[tid]; */
+    /* if ($start > 0) { */
+    /*     @rx_total_ns = sum(nsecs - $start); */
+    /*     @rx_count = count(); */
+    /*     delete(@rx_start[tid]); */
+    /* } */
+}
+
+interval:s:1
+{
+    /* TODO: Compute and print utilization */
+    /* TODO: Reset counters */
+}
+
+END
+{
+    /* TODO: Clean up maps */
+    /* clear(@tx_start); clear(@rx_start); */
+}
