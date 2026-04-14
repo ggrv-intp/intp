@@ -66,7 +66,7 @@ Strategy for each metric:
 
 ## Data Flow
 
-```
+```text
 Kernel Space                          User Space
 +------------------+                  +------------------+
 | tracepoint/net   |--+               |                  |

@@ -49,6 +49,7 @@ vs refactored IntP vs eBPF prototype.
 
 > TODO: Populate from the variant analysis.
 > Each section should include:
+>
 > - Detailed architecture description
 > - Metric collection method for each of the 7 metrics
 > - Measurement fidelity analysis (event-driven vs polling)

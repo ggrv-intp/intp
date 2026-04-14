@@ -20,14 +20,14 @@ Format) for portable, safe kernel instrumentation:
 ## Metrics
 
 | Metric | eBPF Collection Method | Userspace Augmentation |
-|--------|------------------------|------------------------|
-| netp   | tracepoint:net:net_dev_xmit, netif_receive_skb | - |
-| nets   | kprobe:__dev_queue_xmit, kprobe:napi_complete_done | - |
-| blk    | tracepoint:block:block_rq_issue, block_rq_complete | - |
-| mbw    | - | resctrl MBM reader |
-| llcmr  | perf_event (HW_CACHE counters) | - |
+| -------- | ------------------------ | ------------------------ |
+| netp | tracepoint:net:net_dev_xmit, netif_receive_skb | - |
+| nets | kprobe:__dev_queue_xmit, kprobe:napi_complete_done | - |
+| blk | tracepoint:block:block_rq_issue, block_rq_complete | - |
+| mbw | - | resctrl MBM reader |
+| llcmr | perf_event (HW_CACHE counters) | - |
 | llcocc | - | resctrl llc_occupancy reader |
-| cpu    | tracepoint:sched:sched_switch | - |
+| cpu | tracepoint:sched:sched_switch | - |
 
 Software metrics are collected in-kernel via eBPF programs attached to
 tracepoints and kprobes. Data is passed to userspace via a BPF ring buffer.
@@ -65,7 +65,7 @@ sudo ./intp-ebpf -p <PID> -i <interval_ms>
 
 ## References
 
-- libbpf-bootstrap: https://github.com/libbpf/libbpf-bootstrap
+- libbpf-bootstrap: <https://github.com/libbpf/libbpf-bootstrap>
 - Gogge (2023): iprof -- eBPF-based interference profiler
 - Becker et al. (2024): Cloud interference profiling with eBPF
 - Nakryiko, A.: BPF CO-RE reference guide

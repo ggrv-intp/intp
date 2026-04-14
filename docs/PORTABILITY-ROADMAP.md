@@ -21,6 +21,7 @@ simplicity (no kernel modules, no debuginfo).
 
 > TODO: Populate from the portability research.
 > Each section should cover:
+>
 > - Supported kernel version range with specific breakpoints
 > - Distribution package requirements
 > - Hardware feature requirements per metric

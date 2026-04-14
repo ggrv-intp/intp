@@ -26,7 +26,7 @@ Patched version with the following changes:
 ### 2. Functional Metrics
 
 | Metric | Status | Description |
-|--------|--------|-------------|
+| -------- | -------- | ------------- |
 | netp | ✅ Working | Network physical layer utilization (%) |
 | nets | ✅ Working | Network stack utilization (%) |
 | blk | ✅ Working | Block I/O utilization (%) |
@@ -55,17 +55,20 @@ timeout 10 sudo stap --suppress-handler-errors -g intp-6.8.stp bash
 ### Full Monitoring
 
 **Terminal 1:**
+
 ```bash
 sudo stap --suppress-handler-errors -g intp-6.8.stp firefox
 ```
 
 **Terminal 2:**
+
 ```bash
 watch -n2 -d cat /proc/systemtap/stap_*/intestbench
 ```
 
 Expected output:
-```
+
+```text
 netp    nets    blk     mbw     llcmr   llcocc  cpu
 02      01      05      12      03      00      45
                                         ^^
@@ -85,6 +88,7 @@ Kernel 6.8.0 refactored Intel's Resource Director Technology (RDT) / Cache QoS M
 ### Technical Details
 
 **Old Interface (Kernel ≤ 6.6):**
+
 ```c
 // Direct access to CQM RMID
 rr.rmid = pe->hw.cqm_rmid;
@@ -95,6 +99,7 @@ rdmsrl(MSR_IA32_QM_CTR, val);
 ```
 
 **New Interface (Kernel ≥ 6.8):**
+
 ```bash
 # Use resctrl filesystem
 /sys/fs/resctrl/
@@ -116,16 +121,19 @@ rdmsrl(MSR_IA32_QM_CTR, val);
 **Approach:** Read resctrl values from SystemTap via external script
 
 **Pros:**
+
 - Simpler implementation
 - No kernel data structure access needed
 - Can be done entirely in SystemTap script layer
 
 **Cons:**
+
 - Requires resctrl filesystem mounted
 - May have performance overhead
 - Needs coordination between monitoring groups
 
 **Implementation Steps:**
+
 1. Mount resctrl filesystem (if not already)
 2. Create monitoring group for target process
 3. Read `llc_occupancy` from `/sys/fs/resctrl/mon_data/mon_L3_XX/llc_occupancy`
@@ -136,16 +144,19 @@ rdmsrl(MSR_IA32_QM_CTR, val);
 **Approach:** Access resctrl internals via embedded C in SystemTap
 
 **Pros:**
+
 - More efficient
 - Direct kernel access
 - Consistent with other IntP metrics
 
 **Cons:**
+
 - Requires understanding new resctrl kernel internals
 - More complex implementation
 - May break again with future kernel changes
 
 **Implementation Steps:**
+
 1. Find new kernel structures for resctrl monitoring
 2. Locate RMID allocation functions
 3. Access LLC occupancy counters directly
@@ -154,11 +165,13 @@ rdmsrl(MSR_IA32_QM_CTR, val);
 ### Feasibility Assessment
 
 **Hardware Support:**
+
 - CPU: Intel Core i7-13650HX (13th Gen)
 - Kernel: Has `CONFIG_X86_CPU_RESCTRL=y`
 - Status: ⚠️ **Need to verify CPU actually supports CMT/MBM**
 
 **Check CPU Support:**
+
 ```bash
 # Should show cqm_llc, cqm_occup_llc flags if supported
 grep -o "cqm[^ ]*" /proc/cpuinfo | sort -u
@@ -171,11 +184,13 @@ ls /sys/fs/resctrl/info/L3_MON/
 ### Recommended Approach
 
 **Phase 1: Verify Hardware Support** (5 minutes)
+
 - Check CPU flags for CMT/MBM support
 - Attempt to mount resctrl
 - Verify monitoring features available
 
 **Phase 2: Prototype Userspace Helper** (1-2 hours)
+
 - If hardware supports it, create simple script to:
   - Mount resctrl
   - Create monitoring group
@@ -183,12 +198,14 @@ ls /sys/fs/resctrl/info/L3_MON/
   - Test with a sample process
 
 **Phase 3: Integrate with SystemTap** (2-4 hours)
+
 - Add resctrl group management to SystemTap script
 - Read occupancy values via `system()` or embedded C
 - Update `print_llc_report()` function
 - Test with IntP workloads
 
 **Phase 4: Optimize** (optional, 2-4 hours)
+
 - Direct kernel structure access for better performance
 - Error handling for missing hardware support
 - Fallback to 0 if resctrl unavailable

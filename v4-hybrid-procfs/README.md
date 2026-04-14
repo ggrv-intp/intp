@@ -9,15 +9,15 @@ filesystem.
 
 Each metric uses the most appropriate stable kernel interface:
 
-| Metric | Interface                                    | Method       |
-|--------|----------------------------------------------|--------------|
-| netp   | `/sys/class/net/<iface>/statistics/`         | sysfs poll   |
-| nets   | `/proc/net/dev`                              | procfs poll  |
-| blk    | `/proc/diskstats`                            | procfs poll  |
+| Metric | Interface                                      | Method       |
+|--------|----------------------------------------------  |--------------|
+| netp   | `/sys/class/net/<iface>/statistics/`           | sysfs poll   |
+| nets   | `/proc/net/dev`                                | procfs poll  |
+| blk    | `/proc/diskstats`                              | procfs poll  |
 | mbw    | `/sys/fs/resctrl/mon_data/.../mbm_total_bytes` | resctrl poll |
-| llcmr  | `perf_event_open()` with HW_CACHE events     | syscall      |
-| llcocc | `/sys/fs/resctrl/mon_groups/.../llc_occupancy` | resctrl poll |
-| cpu    | `/proc/stat`                                 | procfs poll  |
+| llcmr  | `perf_event_open()` with HW_CACHE events       | syscall      |
+| llcocc | `/sys/fs/resctrl/mon_groups/.../llc_occupancy` |resctrl poll  |
+| cpu    | `/proc/stat`                                   | procfs poll  |
 
 ## Why This Variant Exists
 
@@ -35,6 +35,7 @@ All other metrics can be collected with equivalent or better fidelity.
 ## Tradeoffs vs SystemTap (V1-V3)
 
 **Advantages:**
+
 - No kernel module loaded -- zero crash risk
 - No debuginfo packages required
 - No SystemTap dependency (often unavailable or broken)
@@ -42,6 +43,7 @@ All other metrics can be collected with equivalent or better fidelity.
 - Trivial deployment: single static binary
 
 **Disadvantages:**
+
 - Polling-based: resolution limited to sampling interval
 - Cannot compute per-event service times (nets metric is approximate)
 - perf_event_open() requires CAP_PERFMON or root
