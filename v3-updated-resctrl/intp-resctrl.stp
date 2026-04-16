@@ -589,8 +589,9 @@ probe procfs("intestbench").read
 		cache_ratio = print_cache_report()
 		cache_occ = print_llc_report()
 
-		buff = sprintf("netp\tnets\tblk\tmbw\tllcmr\tllcocc\tcpu\n%02d\t%02d\t%02d\t%02d\t%02d\t%02d\t%02d\n",
-						netphy_util, 
+		buff = sprintf("time_ms\tnetp\tnets\tblk\tmbw\tllcmr\tllcocc\tcpu\n%d\t%02d\t%02d\t%02d\t%02d\t%02d\t%02d\t%02d\n",
+						(gettimeofday_ns() - initial_time) / 1000000,
+						netphy_util,
 						netstak_util,
 						block_util,
 						mem_util,

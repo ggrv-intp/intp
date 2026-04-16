@@ -46,6 +46,8 @@ static void usage(const char *prog)
     fprintf(stderr, "  -o, --output <format>    Output format: text (default), csv\n");
     fprintf(stderr, "  -n, --nic <iface>        Network interface (auto-detected)\n");
     fprintf(stderr, "  -d, --disk <device>      Block device (auto-detected)\n");
+    fprintf(stderr, "  -m, --max-bw <MB/s>      Override peak memory bandwidth for mbw normalization\n");
+    fprintf(stderr, "                           (default: 42656 = DDR4-2666 dual-channel)\n");
     fprintf(stderr, "  -h, --help               Show this help\n");
 }
 
@@ -72,11 +74,12 @@ static void timespec_add_ms(struct timespec *ts, int ms)
 
 int main(int argc, char *argv[])
 {
-    pid_t       target_pid    = 0;
-    int         interval_ms   = 1000;
-    const char *output_format = "text";
-    const char *nic_iface     = NULL;
-    const char *disk_device   = NULL;
+    pid_t       target_pid      = 0;
+    int         interval_ms     = 1000;
+    const char *output_format   = "text";
+    const char *nic_iface       = NULL;
+    const char *disk_device     = NULL;
+    long        max_bw_override = 0;  /* 0 = use detect_mem_bw_mbps() default */
 
     static struct option long_opts[] = {
         {"pid",      required_argument, NULL, 'p'},
@@ -84,19 +87,21 @@ int main(int argc, char *argv[])
         {"output",   required_argument, NULL, 'o'},
         {"nic",      required_argument, NULL, 'n'},
         {"disk",     required_argument, NULL, 'd'},
+        {"max-bw",   required_argument, NULL, 'm'},
         {"help",     no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:i:o:n:d:h",
+    while ((opt = getopt_long(argc, argv, "p:i:o:n:d:m:h",
                               long_opts, NULL)) != -1) {
         switch (opt) {
-        case 'p': target_pid    = (pid_t)atoi(optarg); break;
-        case 'i': interval_ms   = atoi(optarg);        break;
-        case 'o': output_format = optarg;              break;
-        case 'n': nic_iface     = optarg;              break;
-        case 'd': disk_device   = optarg;              break;
+        case 'p': target_pid      = (pid_t)atoi(optarg); break;
+        case 'i': interval_ms     = atoi(optarg);        break;
+        case 'o': output_format   = optarg;              break;
+        case 'n': nic_iface       = optarg;              break;
+        case 'd': disk_device     = optarg;              break;
+        case 'm': max_bw_override = atol(optarg);        break;
         case 'h':
         default:
             usage(argv[0]);
@@ -120,12 +125,14 @@ int main(int argc, char *argv[])
 
     long nic_speed = detect_nic_speed(nic_iface);
     long llc_size  = detect_llc_size_kb();
-    long mem_bw    = detect_mem_bw_mbps();
+    long mem_bw    = (max_bw_override > 0) ? max_bw_override
+                                           : detect_mem_bw_mbps();
 
     fprintf(stderr,
             "[detect] iface=%s nic_speed=%ld Mbps "
-            "llc=%ld KB mem_bw=%ld MB/s\n",
-            nic_iface, nic_speed, llc_size, mem_bw);
+            "llc=%ld KB mem_bw=%ld MB/s%s\n",
+            nic_iface, nic_speed, llc_size, mem_bw,
+            (max_bw_override > 0) ? " (user override)" : "");
 
     /* resctrl group once; mbw + llcocc share it. Failure is not fatal. */
     int resctrl_ok = (resctrl_setup(target_pid) == 0);
