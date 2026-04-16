@@ -1,84 +1,90 @@
 /*
  * netp.c -- Network Physical Utilization (V4 hybrid)
  *
- * IntP metric: netp (network physical utilization)
- * Equivalent to: print_netphy_report() in v1-original/intp.stp
- *
- * Kernel interface:
- *   /sys/class/net/<iface>/statistics/tx_bytes
- *   /sys/class/net/<iface>/statistics/rx_bytes
- *
- * Formula:
- *   delta_bytes = (tx_bytes_now - tx_bytes_prev) + (rx_bytes_now - rx_bytes_prev)
- *   utilization = delta_bytes / (nic_speed_bytes_per_sec * interval_sec) * 100
- *
- * Constants:
- *   NIC speed normalization: 1 Gbps = 125000000 bytes/sec (1000 * 1000 * 1000 / 8)
- *   This matches the hardcoded constant 125000000 in the original intp.stp.
- *
- * Tradeoffs vs V1:
- *   - Equivalent fidelity: sysfs counters are the same source the kernel uses
- *   - Simpler: no kernel probes needed, just read two files
- *   - The original intp.stp also uses counters (not per-packet), so no loss
+ * Reads /sys/class/net/<iface>/statistics/{tx,rx}_bytes. Delta over wall-
+ * clock interval, normalized by NIC line rate. sysfs counters are the same
+ * source the kernel uses, so fidelity equals V1's counter-based netp.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
+#include "intp.h"
 
-static char tx_path[256];
-static char rx_path[256];
-static long nic_speed_bps;  /* bytes per second */
+static char              tx_path[256];
+static char              rx_path[256];
+static long              nic_speed_bps;
 static unsigned long long prev_tx;
 static unsigned long long prev_rx;
+static struct timespec    prev_ts;
+static int                ok;
 
 static unsigned long long read_sysfs_ull(const char *path)
 {
-    /* TODO: Implement sysfs file read */
-    /* Open path, read unsigned long long, close, return value */
-    /* Return 0 on error */
-    (void)path;
-    return 0;
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    unsigned long long v = 0;
+    if (fscanf(f, "%llu", &v) != 1)
+        v = 0;
+    fclose(f);
+    return v;
 }
 
-/*
- * netp_init -- Initialize network physical utilization collector
- *
- * Parameters:
- *   iface          - Network interface name (e.g., "eth0", "ens33")
- *   nic_speed_mbps - NIC speed in Mbps (e.g., 1000 for 1 Gbps)
- *
- * Returns: 0 on success, -1 on error
- */
 int netp_init(const char *iface, long nic_speed_mbps)
 {
-    /* TODO: Build sysfs paths and read initial values */
     snprintf(tx_path, sizeof(tx_path),
-             "/sys/class/net/%s/statistics/tx_bytes", iface);
+             "/sys/class/net/%.63s/statistics/tx_bytes", iface);
     snprintf(rx_path, sizeof(rx_path),
-             "/sys/class/net/%s/statistics/rx_bytes", iface);
+             "/sys/class/net/%.63s/statistics/rx_bytes", iface);
 
-    /* Convert Mbps to bytes/sec: Mbps * 1000000 / 8 */
-    nic_speed_bps = nic_speed_mbps * 1000000L / 8;
+    nic_speed_bps = (nic_speed_mbps > 0 ? nic_speed_mbps : 1000)
+                    * 1000000L / 8;
 
-    /* Read initial counters */
+    FILE *tf = fopen(tx_path, "r");
+    FILE *rf = fopen(rx_path, "r");
+    if (!tf || !rf) {
+        if (tf) fclose(tf);
+        if (rf) fclose(rf);
+        ok = 0;
+        return -1;
+    }
+    fclose(tf);
+    fclose(rf);
+
     prev_tx = read_sysfs_ull(tx_path);
     prev_rx = read_sysfs_ull(rx_path);
-
+    clock_gettime(CLOCK_MONOTONIC, &prev_ts);
+    ok = 1;
     return 0;
 }
 
-/*
- * netp_sample -- Read current counters and compute utilization
- *
- * Returns: Network physical utilization as percentage (0.0 - 100.0)
- */
 double netp_sample(void)
 {
-    /* TODO: Read current tx_bytes and rx_bytes */
-    /* TODO: Compute delta from previous sample */
-    /* TODO: Normalize to NIC speed */
-    /* TODO: Store current as previous for next sample */
-    /* TODO: Return utilization percentage */
-    return 0.0;
+    if (!ok)
+        return NAN;
+
+    unsigned long long tx = read_sysfs_ull(tx_path);
+    unsigned long long rx = read_sysfs_ull(rx_path);
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    double dt = (now.tv_sec  - prev_ts.tv_sec)
+              + (now.tv_nsec - prev_ts.tv_nsec) / 1e9;
+    if (dt <= 0.0)
+        return 0.0;
+
+    unsigned long long d_bytes = (tx - prev_tx) + (rx - prev_rx);
+
+    prev_tx = tx;
+    prev_rx = rx;
+    prev_ts = now;
+
+    double util = (double)d_bytes / ((double)nic_speed_bps * dt) * 100.0;
+    if (util < 0.0)   util = 0.0;
+    if (util > 100.0) util = 100.0;
+    return util;
 }

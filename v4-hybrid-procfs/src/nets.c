@@ -1,100 +1,98 @@
 /*
- * nets.c -- Network Stack Utilization (V4 hybrid)
+ * nets.c -- Network Stack Utilization (V4 hybrid, POLLING APPROXIMATION)
  *
- * IntP metric: nets (network stack utilization / service time)
- * Equivalent to: print_netstack_report() in v1-original/intp.stp
+ * V1's nets measures kernel network-stack service time by timestamping each
+ * packet at dev_queue_xmit()/netif_receive_skb(). Without kernel probes, V4
+ * cannot replicate that. This module approximates stack pressure as packet
+ * rate normalized by line-rate-implied max PPS (using 64-byte packets as
+ * worst-case). This is correlated with but NOT equivalent to service time:
+ *   - small-packet-heavy workloads read higher (correct: stack is busier)
+ *   - large-packet bulk transfer reads lower (correct: fewer skbuffs)
+ *   - queue-congestion events invisible to counters are missed (caveat)
  *
- * Kernel interface:
- *   /proc/net/dev (aggregate RX/TX byte counters per interface)
- *
- * IMPORTANT: This is a POLLING APPROXIMATION of the original metric.
- *
- * The original intp.stp computes network stack service time by timestamping
- * individual packets as they enter and exit the kernel networking stack:
- *   - TX: timestamp at dev_queue_xmit(), measure at net_dev_xmit tracepoint
- *   - RX: timestamp at netif_receive_skb(), measure at ip_rcv()
- *   - Service time = exit_timestamp - entry_timestamp
- *   - Utilization = sum(service_times) / interval * 100
- *
- * Without kernel probes, we CANNOT replicate per-packet latency measurement.
- * Instead, this module reads aggregate byte counters from /proc/net/dev and
- * estimates utilization as throughput relative to a theoretical maximum.
- * This is a fundamentally different measurement -- throughput vs service time.
- *
- * Formula (approximation):
- *   delta_bytes = (rx_now - rx_prev) + (tx_now - tx_prev)
- *   utilization_approx = delta_bytes / (max_throughput * interval) * 100
- *
- * This approximation will:
- *   - Underestimate utilization when packets are small (high PPS, low BPS)
- *   - Miss queue congestion that does not show up in throughput
- *   - Not capture per-packet latency spikes
- *
- * For accurate service-time measurement, use V1/V2/V3 (SystemTap) or
- * V5/V6 (bpftrace/eBPF) which can instrument kernel functions.
+ * Fidelity classification: ~  (see docs/VARIANT-COMPARISON.md).
+ * Plot it alongside V1's nets to expose the approximation gap quantitatively.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
+#include "intp.h"
 
-static char iface_name[64];
-static unsigned long long prev_rx_bytes;
-static unsigned long long prev_tx_bytes;
+static char               iface_name[64];
+static unsigned long long prev_rx_packets;
+static unsigned long long prev_tx_packets;
+static struct timespec    prev_ts;
+static long               max_pps;
+static int                ok;
 
-/*
- * parse_proc_net_dev -- Parse /proc/net/dev for a specific interface
- *
- * /proc/net/dev format (after 2 header lines):
- *   iface: rx_bytes rx_packets ... tx_bytes tx_packets ...
- *
- * Returns: 0 on success, -1 if interface not found
- */
-static int parse_proc_net_dev(const char *iface,
-                              unsigned long long *rx_bytes,
-                              unsigned long long *tx_bytes)
+static int read_iface_packets(const char *iface,
+                              unsigned long long *rx_p,
+                              unsigned long long *tx_p)
 {
-    /* TODO: Open /proc/net/dev */
-    /* TODO: Skip 2 header lines */
-    /* TODO: Find line matching iface */
-    /* TODO: Parse rx_bytes (field 1) and tx_bytes (field 9) */
-    (void)iface;
-    (void)rx_bytes;
-    (void)tx_bytes;
-    return -1;
-}
+    char path[256];
+    snprintf(path, sizeof(path),
+             "/sys/class/net/%.63s/statistics/rx_packets", iface);
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    if (fscanf(f, "%llu", rx_p) != 1) { fclose(f); return -1; }
+    fclose(f);
 
-/*
- * nets_init -- Initialize network stack utilization collector
- *
- * Parameters:
- *   iface - Network interface name
- *
- * Returns: 0 on success, -1 on error
- */
-int nets_init(const char *iface)
-{
-    /* TODO: Store interface name and read initial counters */
-    strncpy(iface_name, iface, sizeof(iface_name) - 1);
-    iface_name[sizeof(iface_name) - 1] = '\0';
-
-    parse_proc_net_dev(iface_name, &prev_rx_bytes, &prev_tx_bytes);
+    snprintf(path, sizeof(path),
+             "/sys/class/net/%.63s/statistics/tx_packets", iface);
+    f = fopen(path, "r");
+    if (!f) return -1;
+    if (fscanf(f, "%llu", tx_p) != 1) { fclose(f); return -1; }
+    fclose(f);
     return 0;
 }
 
-/*
- * nets_sample -- Read current counters and compute approximate utilization
- *
- * Returns: Network stack utilization approximation as percentage (0.0 - 100.0)
- *
- * NOTE: This is a throughput-based approximation, NOT a service-time
- * measurement. See file header for details on the difference.
- */
+int nets_init(const char *iface)
+{
+    snprintf(iface_name, sizeof(iface_name), "%.63s", iface);
+
+    long mbps = detect_nic_speed(iface_name);
+    /* Worst-case PPS: line-rate with minimum-size (64B) frames.
+     * Mbps * 1e6 / 8 bytes = bytes/s ; / 64 = pps */
+    max_pps = mbps * 1000000L / 8 / 64;
+    if (max_pps <= 0)
+        max_pps = 1;
+
+    if (read_iface_packets(iface_name, &prev_rx_packets, &prev_tx_packets) < 0) {
+        ok = 0;
+        return -1;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &prev_ts);
+    ok = 1;
+    return 0;
+}
+
 double nets_sample(void)
 {
-    /* TODO: Read current rx_bytes and tx_bytes from /proc/net/dev */
-    /* TODO: Compute delta from previous sample */
-    /* TODO: Estimate utilization (throughput-based approximation) */
-    /* TODO: Store current as previous for next sample */
-    return 0.0;
+    if (!ok)
+        return NAN;
+
+    unsigned long long rx_p = 0, tx_p = 0;
+    if (read_iface_packets(iface_name, &rx_p, &tx_p) < 0)
+        return NAN;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double dt = (now.tv_sec  - prev_ts.tv_sec)
+              + (now.tv_nsec - prev_ts.tv_nsec) / 1e9;
+    if (dt <= 0.0)
+        return 0.0;
+
+    double pps = (double)((rx_p - prev_rx_packets) + (tx_p - prev_tx_packets)) / dt;
+
+    prev_rx_packets = rx_p;
+    prev_tx_packets = tx_p;
+    prev_ts         = now;
+
+    double util = pps / (double)max_pps * 100.0;
+    if (util < 0.0)   util = 0.0;
+    if (util > 100.0) util = 100.0;
+    return util;
 }
