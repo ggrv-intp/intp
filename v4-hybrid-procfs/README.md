@@ -16,7 +16,7 @@ Each metric uses the most appropriate stable kernel interface:
 | blk    | `/proc/diskstats`                              | procfs poll  |
 | mbw    | `/sys/fs/resctrl/mon_data/.../mbm_total_bytes` | resctrl poll |
 | llcmr  | `perf_event_open()` with HW_CACHE events       | syscall      |
-| llcocc | `/sys/fs/resctrl/mon_groups/.../llc_occupancy` |resctrl poll  |
+| llcocc | `/sys/fs/resctrl/mon_groups/.../llc_occupancy` | resctrl poll |
 | cpu    | `/proc/stat`                                   | procfs poll  |
 
 ## Why This Variant Exists

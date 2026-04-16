@@ -32,10 +32,19 @@
  */
 long detect_nic_speed(const char *iface)
 {
-    /* TODO: Read /sys/class/net/<iface>/speed */
-    /* TODO: Return value if valid (> 0), else return 1000 */
-    (void)iface;
-    return 1000;
+    char path[256];
+    snprintf(path, sizeof(path), "/sys/class/net/%s/speed", iface);
+
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 1000;
+
+    long mbps = 0;
+    if (fscanf(f, "%ld", &mbps) != 1)
+        mbps = 0;
+    fclose(f);
+
+    return (mbps > 0) ? mbps : 1000;
 }
 
 /*
@@ -48,11 +57,61 @@ long detect_nic_speed(const char *iface)
  */
 long detect_llc_size_kb(void)
 {
-    /* TODO: Iterate /sys/devices/system/cpu/cpu0/cache/index* */
-    /* TODO: For each, read "level" file, find max */
-    /* TODO: Read "size" file of the max-level cache */
-    /* TODO: Parse "XXXK" or "XXXM" format */
-    return 0;
+    const char *base = "/sys/devices/system/cpu/cpu0/cache";
+    DIR *d = opendir(base);
+    if (!d)
+        return 0;
+
+    int  max_level = 0;
+    long max_size_kb = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (strncmp(entry->d_name, "index", 5) != 0)
+            continue;
+
+        char path[320];
+        snprintf(path, sizeof(path), "%s/%.63s/level", base, entry->d_name);
+
+        FILE *f = fopen(path, "r");
+        if (!f)
+            continue;
+        int level = 0;
+        if (fscanf(f, "%d", &level) != 1) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+
+        if (level <= max_level)
+            continue;
+
+        snprintf(path, sizeof(path), "%s/%.63s/size", base, entry->d_name);
+        f = fopen(path, "r");
+        if (!f)
+            continue;
+        char raw[32] = {0};
+        if (fscanf(f, "%31s", raw) != 1) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+
+        char *end;
+        long n = strtol(raw, &end, 10);
+        if (n <= 0)
+            continue;
+        if (*end == 'M' || *end == 'm')
+            n *= 1024;
+        else if (*end != 'K' && *end != 'k' && *end != '\0')
+            continue;
+
+        max_level = level;
+        max_size_kb = n;
+    }
+    closedir(d);
+
+    return max_size_kb;
 }
 
 /*
@@ -87,13 +146,43 @@ long detect_mem_bw_mbps(void)
  */
 const char *detect_default_iface(void)
 {
-    /* TODO: Iterate /sys/class/net/ */
-    /* TODO: Skip "lo" */
-    /* TODO: Check operstate == "up" */
-    /* TODO: Return first match */
     static char iface[64] = "eth0";
+    char fallback[64] = {0};
 
-    /* TODO: Implement detection */
-    (void)iface;
+    DIR *net_dir = opendir("/sys/class/net/");
+    if (!net_dir)
+        return iface;
+
+    struct dirent *entry;
+    while ((entry = readdir(net_dir)) != NULL) {
+        if (entry->d_name[0] == '.')
+            continue;
+        if (strcmp(entry->d_name, "lo") == 0)
+            continue;
+
+        if (fallback[0] == '\0')
+            snprintf(fallback, sizeof(fallback), "%.63s", entry->d_name);
+
+        char path[320];
+        snprintf(path, sizeof(path),
+                 "/sys/class/net/%.63s/operstate", entry->d_name);
+
+        FILE *f = fopen(path, "r");
+        if (!f)
+            continue;
+
+        char state[32] = {0};
+        if (fscanf(f, "%31s", state) == 1 && strcmp(state, "up") == 0) {
+            fclose(f);
+            snprintf(iface, sizeof(iface), "%.63s", entry->d_name);
+            closedir(net_dir);
+            return iface;
+        }
+        fclose(f);
+    }
+    closedir(net_dir);
+
+    if (fallback[0] != '\0')
+        snprintf(iface, sizeof(iface), "%s", fallback);
     return iface;
 }

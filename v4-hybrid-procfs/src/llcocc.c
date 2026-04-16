@@ -1,86 +1,55 @@
 /*
- * llcocc.c -- LLC Occupancy (V4 hybrid)
+ * llcocc.c -- LLC Occupancy (V4 hybrid, resctrl)
  *
- * IntP metric: llcocc (Last-Level Cache occupancy)
- * Equivalent to: print_llc_report() in v1-original/intp.stp
+ * Sums llc_occupancy across every mon_L3_* domain in our monitoring group,
+ * normalizes by total LLC bytes across all domains. On multi-socket (Intel)
+ * or multi-CCX (AMD) systems this correctly reflects aggregate occupancy.
  *
- * Kernel interface:
- *   /sys/fs/resctrl/mon_groups/<name>/mon_data/mon_L3_XX/llc_occupancy
- *
- * The resctrl filesystem exposes Intel RDT Cache Monitoring Technology (CMT)
- * data. The llc_occupancy file reports the number of bytes of LLC occupied
- * by the monitored process group.
- *
- * This is the metric that broke in kernel 6.8: the original intp.stp
- * accessed the cqm_rmid field from struct hw_perf_event to read the
- * process RMID, then queried the QOS_L3_OCC MSR directly. Kernel 6.8
- * removed cqm_rmid, breaking that approach.
- *
- * The resctrl approach is the kernel's official replacement interface.
- * It requires creating a monitoring group and assigning the target PID
- * to it (handled by shared/intp-resctrl-helper.sh or programmatically).
- *
- * Formula:
- *   occupancy_bytes = read(llc_occupancy)
- *   occupancy_pct = occupancy_bytes / llc_total_size_bytes * 100
- *
- * The llc_occupancy value is already in bytes. Normalization requires
- * knowing the total LLC size, which can be detected from:
- *   /sys/devices/system/cpu/cpu0/cache/indexN/size (where N = highest level)
- *
- * Requirements:
- *   - Intel RDT CMT or AMD PQoS L3 Monitoring hardware
- *   - resctrl filesystem mounted
- *   - Monitoring group created for target PID
- *
- * Tradeoffs vs V1:
- *   - Equivalent data (resctrl uses the same hardware counters)
- *   - More robust (filesystem vs direct MSR access)
- *   - Requires explicit group management (intp-resctrl-helper.sh)
+ * This metric is the headline fix for kernel 6.8 -- where V1 broke when
+ * cqm_rmid was removed from struct hw_perf_event. resctrl is the kernel's
+ * supported replacement and is vendor-neutral.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include "intp.h"
+#include "resctrl.h"
 
-static char llcocc_path[256];
-static long llc_total_bytes;
+static char  occ_paths[RESCTRL_MAX_DOMAINS][RESCTRL_PATH_MAX];
+static int   n_domains;
+static long  llc_total_bytes;
+static int   ok;
 
-/*
- * llcocc_init -- Initialize LLC occupancy collector
- *
- * Parameters:
- *   target_pid  - PID being monitored (for finding resctrl group)
- *   llc_size_kb - Total LLC size in KB (for normalization)
- *
- * Returns: 0 on success, -1 on error
- *
- * Assumes that shared/intp-resctrl-helper.sh has already created a
- * monitoring group named "intp_mon_<PID>".
- */
 int llcocc_init(pid_t target_pid, long llc_size_kb)
 {
-    /* TODO: Build path to llc_occupancy file */
-    /* Path pattern: /sys/fs/resctrl/mon_groups/intp_mon_<PID>/mon_data/mon_L3_XX/llc_occupancy */
-    /* TODO: Find the mon_L3_XX directory (iterate, pick first) */
-    (void)target_pid;
+    (void)target_pid;  /* group setup was done before us, in main() */
 
-    llc_total_bytes = llc_size_kb * 1024L;
+    n_domains = resctrl_enumerate_domains("llc_occupancy",
+                                          occ_paths, RESCTRL_MAX_DOMAINS);
+    if (n_domains == 0 || llc_size_kb <= 0) {
+        fprintf(stderr, "[llcocc] no llc_occupancy counters or unknown LLC size "
+                        "-- metric disabled\n");
+        ok = 0;
+        return -1;
+    }
 
+    /* detect_llc_size_kb() gave us cpu0's LLC; multiply by domain count. */
+    llc_total_bytes = llc_size_kb * 1024L * n_domains;
+    ok = 1;
     return 0;
 }
 
-/*
- * llcocc_sample -- Read LLC occupancy and compute percentage
- *
- * Returns: LLC occupancy as percentage of total LLC (0.0 - 100.0)
- */
 double llcocc_sample(void)
 {
-    /* TODO: Read llc_occupancy file (single unsigned long long value) */
-    /* TODO: Normalize: occupancy_bytes / llc_total_bytes * 100 */
-    /* TODO: Handle llc_total_bytes == 0 (return 0.0) */
-    (void)llcocc_path;
-    (void)llc_total_bytes;
-    return 0.0;
+    if (!ok || llc_total_bytes <= 0)
+        return NAN;
+
+    unsigned long long bytes = resctrl_sum_counters(occ_paths, n_domains);
+    double pct = (double)bytes / (double)llc_total_bytes * 100.0;
+
+    if (pct < 0.0)   pct = 0.0;
+    if (pct > 100.0) pct = 100.0;
+    return pct;
 }
