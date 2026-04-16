@@ -1,58 +1,37 @@
 /*
- * llcmr.c -- LLC Miss Ratio (V4 hybrid)
+ * llcmr.c -- LLC Miss Ratio (V4 hybrid, perf_event_open)
  *
- * IntP metric: llcmr (Last-Level Cache miss ratio)
- * Equivalent to: print_cache_report() in v1-original/intp.stp
+ * Opens two PERF_TYPE_HW_CACHE counters on the target PID:
+ *   LL | OP_READ | RESULT_ACCESS  (references)
+ *   LL | OP_READ | RESULT_MISS    (misses)
  *
- * Kernel interface:
- *   perf_event_open() syscall with PERF_TYPE_HW_CACHE config
+ * inherit=1 so child threads count. Requires CAP_PERFMON (or root, or
+ * perf_event_paranoid <= 1). On failure we degrade to NaN.
  *
- * This module uses the perf_event_open() syscall to program hardware
- * performance counters for LLC cache references and cache misses.
- * The perf subsystem handles the per-CPU multiplexing and provides
- * a stable interface across kernel versions (since Linux 2.6.31).
- *
- * perf_event_attr configuration:
- *   type = PERF_TYPE_HW_CACHE
- *   config for LLC loads:
- *     (PERF_COUNT_HW_CACHE_LL) |
- *     (PERF_COUNT_HW_CACHE_OP_READ << 8) |
- *     (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16)
- *   config for LLC misses:
- *     (PERF_COUNT_HW_CACHE_LL) |
- *     (PERF_COUNT_HW_CACHE_OP_READ << 8) |
- *     (PERF_COUNT_HW_CACHE_RESULT_MISS << 16)
- *
- * Formula:
- *   miss_ratio = (delta_misses * 100) / delta_references
- *   If delta_references == 0, miss_ratio = 0
- *
- * The original intp.stp uses the same perf_event infrastructure but
- * accesses it through SystemTap's perf_event integration. The V4
- * approach calls perf_event_open() directly, which is functionally
- * equivalent but without the SystemTap dependency.
- *
- * Requirements:
- *   - CAP_PERFMON capability, or
- *   - /proc/sys/kernel/perf_event_paranoid <= 1, or
- *   - Root privileges
+ * HW_CACHE generic events translate to the platform's native PMU event codes:
+ *   - Intel:   last-level cache references / misses
+ *   - AMD EPYC/Zen: L3 generic events
+ *   - ARM:     PMU LLC counters (availability varies by SoC)
+ * Portability issue: some ARM SoCs do not expose HW_CACHE_LL; in that case
+ * perf_event_open returns ENOENT and we disable the metric.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <math.h>
+#include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <linux/perf_event.h>
+#include "intp.h"
 
-static int fd_refs = -1;   /* File descriptor for LLC references counter */
-static int fd_miss = -1;   /* File descriptor for LLC misses counter */
+static int fd_refs = -1;
+static int fd_miss = -1;
 static unsigned long long prev_refs;
 static unsigned long long prev_miss;
 
-/*
- * perf_event_open wrapper
- */
 static long sys_perf_event_open(struct perf_event_attr *attr,
                                 pid_t pid, int cpu, int group_fd,
                                 unsigned long flags)
@@ -60,65 +39,46 @@ static long sys_perf_event_open(struct perf_event_attr *attr,
     return syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags);
 }
 
-/*
- * setup_cache_counter -- Configure a perf_event for HW_CACHE events
- *
- * Reference perf_event_attr setup:
- *
- *   struct perf_event_attr attr = {
- *       .type           = PERF_TYPE_HW_CACHE,
- *       .size           = sizeof(struct perf_event_attr),
- *       .config         = cache_config,
- *       .disabled       = 1,
- *       .exclude_kernel = 0,  // include kernel-space cache events
- *       .exclude_hv     = 1,
- *       .inherit        = 1,  // count child processes too
- *   };
- *   int fd = perf_event_open(&attr, target_pid, -1, -1, 0);
- *
- * Returns: file descriptor on success, -1 on error
- */
 static int setup_cache_counter(pid_t pid, unsigned long long cache_config)
 {
-    /* TODO: Set up perf_event_attr */
-    /* TODO: Call perf_event_open() */
-    /* TODO: Enable the counter with ioctl(fd, PERF_EVENT_IOC_ENABLE, 0) */
-    (void)pid;
-    (void)cache_config;
-    return -1;
+    struct perf_event_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.type            = PERF_TYPE_HW_CACHE;
+    attr.size            = sizeof(attr);
+    attr.config          = cache_config;
+    attr.disabled        = 1;
+    attr.exclude_hv      = 1;
+    attr.inherit         = 1;
+
+    int fd = (int)sys_perf_event_open(&attr, pid, -1, -1, 0);
+    if (fd < 0)
+        return -1;
+
+    if (ioctl(fd, PERF_EVENT_IOC_RESET, 0) < 0 ||
+        ioctl(fd, PERF_EVENT_IOC_ENABLE, 0) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
-/*
- * read_counter -- Read the current value of a perf_event counter
- *
- * Returns: counter value, or 0 on error
- */
 static unsigned long long read_counter(int fd)
 {
-    /* TODO: read(fd, &value, sizeof(value)) */
-    (void)fd;
-    return 0;
+    unsigned long long v = 0;
+    if (read(fd, &v, sizeof(v)) != (ssize_t)sizeof(v))
+        return 0;
+    return v;
 }
 
-/*
- * llcmr_init -- Initialize LLC miss ratio collector
- *
- * Parameters:
- *   target_pid - PID to monitor (perf_event will track this process)
- *
- * Returns: 0 on success, -1 on error
- */
 int llcmr_init(pid_t target_pid)
 {
-    /* TODO: Set up LLC references counter */
     unsigned long long refs_config =
-        (PERF_COUNT_HW_CACHE_LL) |
+        (unsigned long long)PERF_COUNT_HW_CACHE_LL |
         ((unsigned long long)PERF_COUNT_HW_CACHE_OP_READ << 8) |
         ((unsigned long long)PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16);
 
-    /* TODO: Set up LLC misses counter */
     unsigned long long miss_config =
-        (PERF_COUNT_HW_CACHE_LL) |
+        (unsigned long long)PERF_COUNT_HW_CACHE_LL |
         ((unsigned long long)PERF_COUNT_HW_CACHE_OP_READ << 8) |
         ((unsigned long long)PERF_COUNT_HW_CACHE_RESULT_MISS << 16);
 
@@ -126,37 +86,44 @@ int llcmr_init(pid_t target_pid)
     fd_miss = setup_cache_counter(target_pid, miss_config);
 
     if (fd_refs < 0 || fd_miss < 0) {
-        /* TODO: Handle error, possibly fall back to PERF_TYPE_HARDWARE */
+        fprintf(stderr,
+                "[llcmr] perf_event_open failed (%s) -- metric disabled "
+                "(need CAP_PERFMON or perf_event_paranoid <= 1)\n",
+                strerror(errno));
+        llcmr_cleanup();
         return -1;
     }
 
     prev_refs = read_counter(fd_refs);
     prev_miss = read_counter(fd_miss);
-
     return 0;
 }
 
-/*
- * llcmr_sample -- Read counters and compute LLC miss ratio
- *
- * Returns: LLC miss ratio as percentage (0.0 - 100.0)
- */
 double llcmr_sample(void)
 {
-    /* TODO: Read current counter values */
-    /* TODO: Compute deltas */
-    /* TODO: miss_ratio = delta_miss * 100.0 / delta_refs */
-    /* TODO: Handle delta_refs == 0 (return 0.0) */
-    /* TODO: Store current as previous */
-    return 0.0;
+    if (fd_refs < 0 || fd_miss < 0)
+        return NAN;
+
+    unsigned long long refs = read_counter(fd_refs);
+    unsigned long long miss = read_counter(fd_miss);
+
+    unsigned long long d_refs = refs - prev_refs;
+    unsigned long long d_miss = miss - prev_miss;
+
+    prev_refs = refs;
+    prev_miss = miss;
+
+    if (d_refs == 0)
+        return 0.0;
+
+    double ratio = (double)d_miss * 100.0 / (double)d_refs;
+    if (ratio < 0.0)   ratio = 0.0;
+    if (ratio > 100.0) ratio = 100.0;
+    return ratio;
 }
 
-/*
- * llcmr_cleanup -- Close perf_event file descriptors
- */
 void llcmr_cleanup(void)
 {
-    /* TODO: Close fd_refs and fd_miss */
     if (fd_refs >= 0) close(fd_refs);
     if (fd_miss >= 0) close(fd_miss);
     fd_refs = -1;
