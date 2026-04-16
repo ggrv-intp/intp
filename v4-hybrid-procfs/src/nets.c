@@ -1,98 +1,238 @@
 /*
- * nets.c -- Network Stack Utilization (V4 hybrid, POLLING APPROXIMATION)
+ * nets.c -- network stack utilization (always DEGRADED).
  *
- * V1's nets measures kernel network-stack service time by timestamping each
- * packet at dev_queue_xmit()/netif_receive_skb(). Without kernel probes, V4
- * cannot replicate that. This module approximates stack pressure as packet
- * rate normalized by line-rate-implied max PPS (using 64-byte packets as
- * worst-case). This is correlated with but NOT equivalent to service time:
- *   - small-packet-heavy workloads read higher (correct: stack is busier)
- *   - large-packet bulk transfer reads lower (correct: fewer skbuffs)
- *   - queue-congestion events invisible to counters are missed (caveat)
+ *   1. nets_softirqs   /proc/softirqs NET_TX+NET_RX delta combined with
+ *                      /proc/stat softirq jiffies. Estimates the fraction
+ *                      of CPU time spent processing network softirqs.
+ *   2. nets_throughput /proc/net/dev throughput * fixed per-packet service
+ *                      time (1us/packet typical). Coarser approximation.
  *
- * Fidelity classification: ~  (see docs/VARIANT-COMPARISON.md).
- * Plot it alongside V1's nets to expose the approximation gap quantitatively.
+ * IntP V1 measures this via kprobes on dev_queue_xmit and napi paths to
+ * get true per-packet service time. V4 cannot replicate that without
+ * kernel instrumentation; both backends are documented approximations
+ * and report status=DEGRADED.
  */
 
+#include "backend.h"
+#include "detect.h"
+#include "procutil.h"
+
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <math.h>
-#include "intp.h"
 
-static char               iface_name[64];
-static unsigned long long prev_rx_packets;
-static unsigned long long prev_tx_packets;
-static struct timespec    prev_ts;
-static long               max_pps;
-static int                ok;
+/* ---- backend 1: softirq-time fraction ---------------------------------- */
 
-static int read_iface_packets(const char *iface,
-                              unsigned long long *rx_p,
-                              unsigned long long *tx_p)
+static struct {
+    int           valid;
+    unsigned long prev_net_tx;
+    unsigned long prev_net_rx;
+    unsigned long prev_total_softirqs;     /* sum of all softirq columns... */
+    /* /proc/stat does not split softirq time per-vector, so we approximate
+     * by scaling system softirq jiffies by the (NET_TX+NET_RX)/all ratio
+     * derived from /proc/softirqs counts. */
+    unsigned long prev_softirq_jiffies;
+    unsigned long prev_total_jiffies;
+} sf;
+
+static int read_softirq_jiffies(unsigned long *out, unsigned long *total)
 {
-    char path[256];
-    snprintf(path, sizeof(path),
-             "/sys/class/net/%.63s/statistics/rx_packets", iface);
-    FILE *f = fopen(path, "r");
+    /* /proc/stat fields after "cpu  ":
+     *  user nice system idle iowait irq softirq steal guest guest_nice
+     *  index  0    1    2    3     4    5     6     7     8     9         */
+    FILE *f = fopen("/proc/stat", "r");
     if (!f) return -1;
-    if (fscanf(f, "%llu", rx_p) != 1) { fclose(f); return -1; }
+    char line[512];
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
     fclose(f);
-
-    snprintf(path, sizeof(path),
-             "/sys/class/net/%.63s/statistics/tx_packets", iface);
-    f = fopen(path, "r");
-    if (!f) return -1;
-    if (fscanf(f, "%llu", tx_p) != 1) { fclose(f); return -1; }
-    fclose(f);
+    unsigned long u, ni, sy, id, io, ir, sf2, st, gu, gn;
+    int n = sscanf(line, "cpu  %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu",
+                   &u, &ni, &sy, &id, &io, &ir, &sf2, &st, &gu, &gn);
+    if (n < 7) return -1;
+    if (n < 8)  st = 0;
+    if (n < 9)  gu = 0;
+    if (n < 10) gn = 0;
+    *out   = sf2;
+    *total = u + ni + sy + id + io + ir + sf2 + st + gu + gn;
     return 0;
 }
 
-int nets_init(const char *iface)
+/* Read total softirq count from the "TOTAL" row when present (recent kernels)
+ * or by approximation: sum of NET_TX+NET_RX is enough to know the *fraction*. */
+static int sum_all_softirqs(unsigned long *total_count)
 {
-    snprintf(iface_name, sizeof(iface_name), "%.63s", iface);
-
-    long mbps = detect_nic_speed(iface_name);
-    /* Worst-case PPS: line-rate with minimum-size (64B) frames.
-     * Mbps * 1e6 / 8 bytes = bytes/s ; / 64 = pps */
-    max_pps = mbps * 1000000L / 8 / 64;
-    if (max_pps <= 0)
-        max_pps = 1;
-
-    if (read_iface_packets(iface_name, &prev_rx_packets, &prev_tx_packets) < 0) {
-        ok = 0;
-        return -1;
+    FILE *f = fopen("/proc/softirqs", "r");
+    if (!f) return -1;
+    char line[8192];
+    unsigned long total = 0;
+    /* skip header */
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+    while (fgets(line, sizeof(line), f)) {
+        const char *p = strchr(line, ':');
+        if (!p) continue;
+        p++;
+        while (*p) {
+            while (*p == ' ' || *p == '\t') p++;
+            if (!*p || *p == '\n') break;
+            char *end;
+            unsigned long v = strtoul(p, &end, 10);
+            if (end == p) break;
+            total += v;
+            p = end;
+        }
     }
-    clock_gettime(CLOCK_MONOTONIC, &prev_ts);
-    ok = 1;
+    fclose(f);
+    *total_count = total;
     return 0;
 }
 
-double nets_sample(void)
+static int softirq_probe(void)
 {
-    if (!ok)
-        return NAN;
-
-    unsigned long long rx_p = 0, tx_p = 0;
-    if (read_iface_packets(iface_name, &rx_p, &tx_p) < 0)
-        return NAN;
-
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    double dt = (now.tv_sec  - prev_ts.tv_sec)
-              + (now.tv_nsec - prev_ts.tv_nsec) / 1e9;
-    if (dt <= 0.0)
-        return 0.0;
-
-    double pps = (double)((rx_p - prev_rx_packets) + (tx_p - prev_tx_packets)) / dt;
-
-    prev_rx_packets = rx_p;
-    prev_tx_packets = tx_p;
-    prev_ts         = now;
-
-    double util = pps / (double)max_pps * 100.0;
-    if (util < 0.0)   util = 0.0;
-    if (util > 100.0) util = 100.0;
-    return util;
+    FILE *f = fopen("/proc/softirqs", "r");
+    if (!f) return -1;
+    fclose(f);
+    f = fopen("/proc/stat", "r");
+    if (!f) return -1;
+    fclose(f);
+    return 0;
 }
+
+static int softirq_init(void)
+{
+    if (procutil_read_net_softirqs(&sf.prev_net_tx, &sf.prev_net_rx) != 0)
+        return -1;
+    if (sum_all_softirqs(&sf.prev_total_softirqs) != 0) return -1;
+    if (read_softirq_jiffies(&sf.prev_softirq_jiffies,
+                             &sf.prev_total_jiffies) != 0) return -1;
+    sf.valid = 1;
+    return 0;
+}
+
+static int softirq_read(metric_sample_t *out, double interval_sec)
+{
+    if (!sf.valid || interval_sec <= 0) return -1;
+    unsigned long net_tx = 0, net_rx = 0;
+    unsigned long total_si = 0, sj = 0, tj = 0;
+    if (procutil_read_net_softirqs(&net_tx, &net_rx) != 0) return -1;
+    if (sum_all_softirqs(&total_si) != 0) return -1;
+    if (read_softirq_jiffies(&sj, &tj) != 0) return -1;
+
+    unsigned long d_net   = (net_tx + net_rx)
+                           - (sf.prev_net_tx + sf.prev_net_rx);
+    unsigned long d_total = total_si - sf.prev_total_softirqs;
+    unsigned long d_sj    = sj - sf.prev_softirq_jiffies;
+    unsigned long d_tj    = tj - sf.prev_total_jiffies;
+
+    sf.prev_net_tx          = net_tx;
+    sf.prev_net_rx          = net_rx;
+    sf.prev_total_softirqs  = total_si;
+    sf.prev_softirq_jiffies = sj;
+    sf.prev_total_jiffies   = tj;
+
+    double net_fraction = (d_total > 0)
+        ? (double)d_net / (double)d_total : 0.0;
+    double softirq_pct  = (d_tj > 0)
+        ? (double)d_sj / (double)d_tj * 100.0 : 0.0;
+
+    double v = net_fraction * softirq_pct;
+    if (v < 0.0)  v = 0.0;
+    if (v > 99.0) v = 99.0;
+    out->value      = v;
+    out->status     = METRIC_STATUS_DEGRADED;
+    out->backend_id = "procfs_softirq";
+    out->note       = "approximation_no_kprobes";
+    return 0;
+}
+
+static void softirq_cleanup(void) { sf.valid = 0; }
+
+/* ---- backend 2: throughput * fixed per-packet service time ------------- */
+
+static struct {
+    int                valid;
+    char               iface[64];
+    unsigned long      prev_packets;
+    int                num_cores;
+} tp;
+
+static int throughput_probe(void)
+{
+    /* Always usable when /proc/net/dev is readable. */
+    netdev_entry_t e[1];
+    return procutil_read_netdev(e, 1) >= 1 ? 0 : -1;
+}
+
+static int read_iface_packets(const char *iface, unsigned long *pkts)
+{
+    netdev_entry_t es[32];
+    int n = procutil_read_netdev(es, 32);
+    if (n <= 0) return -1;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(es[i].iface, iface) == 0) {
+            *pkts = es[i].rx_packets + es[i].tx_packets;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int throughput_init(void)
+{
+    const intp_target_t *t = intp_target_get();
+    snprintf(tp.iface, sizeof(tp.iface), "%s",
+             (t && t->iface && t->iface[0]) ? t->iface : detect_default_iface());
+    if (read_iface_packets(tp.iface, &tp.prev_packets) != 0) return -1;
+    tp.num_cores = detect_cached()->num_cores;
+    if (tp.num_cores <= 0) tp.num_cores = 1;
+    tp.valid = 1;
+    return 0;
+}
+
+static int throughput_read(metric_sample_t *out, double interval_sec)
+{
+    if (!tp.valid || interval_sec <= 0) return -1;
+    unsigned long pkts = 0;
+    if (read_iface_packets(tp.iface, &pkts) != 0) return -1;
+    long delta = (long)(pkts - tp.prev_packets);
+    tp.prev_packets = pkts;
+
+    /* Assume 1 microsecond of CPU time per packet on modern x86_64 NICs.
+     * busy_seconds = pkts/sec * 1e-6. Express as percent of one CPU; then
+     * divide by num_cores so the metric is a system-wide percentage. */
+    double pps          = (double)delta / interval_sec;
+    double busy_per_cpu = pps * 1.0e-6 * 100.0;
+    double v            = busy_per_cpu / (double)tp.num_cores;
+    if (v < 0.0)  v = 0.0;
+    if (v > 99.0) v = 99.0;
+    out->value      = v;
+    out->status     = METRIC_STATUS_DEGRADED;
+    out->backend_id = "procfs_throughput";
+    out->note       = "fixed_1us_per_packet_estimate";
+    return 0;
+}
+
+static void throughput_cleanup(void) { tp.valid = 0; }
+
+static backend_t b_softirq = {
+    .backend_id  = "procfs_softirq",
+    .description = "/proc/softirqs NET_TX+NET_RX fraction of /proc/stat softirq time",
+    .probe = softirq_probe, .init = softirq_init,
+    .read  = softirq_read,   .cleanup = softirq_cleanup,
+};
+
+static backend_t b_throughput = {
+    .backend_id  = "procfs_throughput",
+    .description = "throughput * fixed 1us/packet kernel service time",
+    .probe = throughput_probe, .init = throughput_init,
+    .read  = throughput_read,   .cleanup = throughput_cleanup,
+};
+
+static metric_t m = {
+    .metric_name = "nets",
+    .backends    = { &b_softirq, &b_throughput },
+    .n_backends  = 2,
+};
+
+metric_t *metric_nets(void) { return &m; }

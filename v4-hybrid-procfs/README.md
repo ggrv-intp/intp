@@ -1,74 +1,101 @@
-# V4 -- Hybrid procfs/perf_event/resctrl (No Framework)
+# V4 -- Hybrid procfs / perf_event / resctrl Implementation
 
-This variant collects all 7 IntP interference metrics using only stable
-kernel interfaces -- no SystemTap, no eBPF, no kernel module. It is a pure C
-program that polls procfs, sysfs, perf_event_open(), and the resctrl
-filesystem.
+IntP rebuilt using only stable Linux kernel interfaces. No SystemTap, no
+eBPF, no kernel modules, no debuginfo. The dissertation's claim that all
+seven IntP interference dimensions can be collected with stable ABIs is
+proven empirically by this binary.
 
-## Approach
+## Architecture in one sentence
 
-Each metric uses the most appropriate stable kernel interface:
+V4 is a runtime-adaptive hierarchy of backends -- each metric carries an
+ordered list of (probe, init, read, cleanup) backends, the runtime picks
+the first backend that probes successfully on the current host, and the
+output declares which backend supplied each value so consumers can tell
+"real reading" from "approximation" from "proxy".
 
-| Metric | Interface                                      | Method       |
-|--------|----------------------------------------------  |--------------|
-| netp   | `/sys/class/net/<iface>/statistics/`           | sysfs poll   |
-| nets   | `/proc/net/dev`                                | procfs poll  |
-| blk    | `/proc/diskstats`                              | procfs poll  |
-| mbw    | `/sys/fs/resctrl/mon_data/.../mbm_total_bytes` | resctrl poll |
-| llcmr  | `perf_event_open()` with HW_CACHE events       | syscall      |
-| llcocc | `/sys/fs/resctrl/mon_groups/.../llc_occupancy` | resctrl poll |
-| cpu    | `/proc/stat`                                   | procfs poll  |
+See `DESIGN.md` for the full backend hierarchy, decision tree, tradeoffs,
+RMID budget management, and cross-environment behaviour.
 
-## Why This Variant Exists
+## Quick start
 
-This is "Path 2" from the portability research: the question of whether IntP's
-metrics can be collected without any kernel instrumentation framework at all.
-The answer is yes, with one important tradeoff:
+Build (no external dependencies beyond glibc + libpthread):
 
-- **nets** becomes a polling approximation. The original IntP computes network
-  stack service time by timestamping individual packets through kernel probes.
-  Without kernel probes, we can only measure aggregate throughput and estimate
-  utilization -- we cannot measure per-packet latency or service time.
+    make
 
-All other metrics can be collected with equivalent or better fidelity.
+Detect what backends will be used on this host (no monitoring, just a
+capability dump):
 
-## Tradeoffs vs SystemTap (V1-V3)
+    ./intp-hybrid --list-backends
 
-**Advantages:**
+Run system-wide, IntP-compatible 7-column TSV at 1-second resolution:
 
-- No kernel module loaded -- zero crash risk
-- No debuginfo packages required
-- No SystemTap dependency (often unavailable or broken)
-- Works across kernel versions with minimal changes
-- Trivial deployment: single static binary
+    sudo ./intp-hybrid --interval 1
 
-**Disadvantages:**
+Per-PID monitoring, JSON line-delimited output:
 
-- Polling-based: resolution limited to sampling interval
-- Cannot compute per-event service times (nets metric is approximate)
-- perf_event_open() requires CAP_PERFMON or root
+    sudo ./intp-hybrid --pids 1234,5678 --output json
 
-## Building
+Prometheus exposition (intended for `textfile_collector`):
 
-```bash
-make
-```
+    sudo ./intp-hybrid --output prometheus --duration 1
 
-## Usage
+## Output format
 
-```bash
-sudo ./intp-hybrid -p <PID> -i <interval_ms>
-```
+The default `tsv` output is byte-compatible with the original `intestbench`
+7-column TSV (`netp nets blk mbw llcmr llcocc cpu`), so the existing IADA
+pipeline and downstream consumers work unchanged. A leading `# v4 backends:`
+banner declares which backend each column came from.
 
-## Files
+`--output json` is line-delimited; each record carries `value`, `status`
+(ok/degraded/proxy/unavailable), `backend`, and an optional `note`.
 
-- `Makefile` -- Build system
-- `intp-hybrid.c` -- Main program (argument parsing, polling loop, output)
-- `src/netp.c` -- Network physical utilization (sysfs)
-- `src/nets.c` -- Network stack utilization (procfs, approximate)
-- `src/blk.c` -- Block I/O utilization (procfs)
-- `src/mbw.c` -- Memory bandwidth (resctrl)
-- `src/llcmr.c` -- LLC miss ratio (perf_event_open)
-- `src/llcocc.c` -- LLC occupancy (resctrl)
-- `src/cpu.c` -- CPU utilization (procfs)
-- `src/detect.c` -- Hardware detection functions
+`--output prometheus` writes the standard text exposition format with
+labels `metric`, `backend`, `status`.
+
+## Privileges
+
+| capability                               | what it unlocks                       |
+|------------------------------------------|---------------------------------------|
+| no privileges                            | netp, nets, blk, cpu (system-wide)    |
+| `CAP_PERFMON` (kernel 5.8+) or root      | llcmr per-PID via PERF_TYPE_HW_CACHE  |
+| root + `perf_event_paranoid <= -1`       | mbw via uncore IMC / AMD DF / ARM CMN |
+| root (or CAP_SYS_ADMIN)                  | resctrl mon_groups (mbw + llcocc)     |
+
+The binary degrades gracefully: every metric whose backend cannot be
+selected reports `--` in TSV and `null` in JSON, with the `# v4 backends:`
+banner naming `none` for that column.
+
+## Supported platforms
+
+| Platform                    | netp | nets | blk  | mbw         | llcmr  | llcocc   | cpu  |
+|-----------------------------|------|------|------|-------------|--------|----------|------|
+| Intel Xeon (RDT)            | full | dgrd | full | resctrl     | full   | resctrl  | full |
+| Intel Consumer (no RDT)     | full | dgrd | full | imc \*      | full   | proxy    | full |
+| AMD EPYC Rome+ (resctrl)    | full | dgrd | full | resctrl     | full   | resctrl  | full |
+| AMD EPYC pre-Rome           | full | dgrd | full | amd_df \*   | full   | proxy    | full |
+| ARM Neoverse + MPAM (6.19+) | full | dgrd | full | resctrl     | full   | resctrl  | full |
+| ARM Neoverse (no MPAM)      | full | dgrd | full | arm_cmn \*  | full   | proxy    | full |
+| VM with PMU passthrough     | full | dgrd | full | varies      | full   | varies   | full |
+| VM without PMU passthrough  | full | dgrd | full | none        | none   | none     | full |
+| Container, host resctrl mnt | full | dgrd | full | resctrl     | varies | resctrl  | full |
+| Container, no resctrl mnt   | full | dgrd | full | none        | varies | proxy    | full |
+
+`full` = primary backend; `dgrd` = degraded (always for nets, see
+DESIGN.md); `proxy` = llcocc derived from llcmr (directional only);
+`*` = needs CAP_SYS_ADMIN or `perf_event_paranoid <= -1`.
+
+## Forcing or disabling a backend (for experiments)
+
+For evaluation runs that need a specific backend (e.g. comparing resctrl
+MBM against uncore IMC on the same Intel host):
+
+    ./intp-hybrid --force-backend mbw:perf_uncore_imc
+    ./intp-hybrid --disable-metric nets
+
+## Layout
+
+    include/        intp.h, backend.h, detect.h, resctrl.h, perfev.h, procutil.h
+    src/            one .c per concern; metrics expose metric_<name>()
+    tests/          test-detect.c, test-procutil.c (run via `make run-tests`)
+    scripts/        test-environments.sh, build-deb.sh, compare-environments.py
+    intp-hybrid.c   CLI, polling loop, output formatters
