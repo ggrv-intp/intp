@@ -1,21 +1,20 @@
 /*
  * intp-hybrid.c -- IntP Hybrid Interference Profiler (V4)
  *
- * Main program for the hybrid procfs/perf_event/resctrl IntP variant.
- * Collects all 7 interference metrics using only stable kernel interfaces:
- *   - netp:  /sys/class/net/<iface>/statistics/ (sysfs)
- *   - nets:  /proc/net/dev (procfs, polling approximation)
- *   - blk:   /proc/diskstats (procfs)
- *   - mbw:   /sys/fs/resctrl/mon_data/.../mbm_total_bytes (resctrl)
- *   - llcmr: perf_event_open() with PERF_TYPE_HW_CACHE (syscall)
- *   - llcocc: /sys/fs/resctrl/mon_groups/.../llc_occupancy (resctrl)
- *   - cpu:   /proc/stat (procfs)
+ * Collects all 7 interference metrics using only stable kernel ABIs:
+ *   netp    sysfs /sys/class/net/<iface>/statistics/
+ *   nets    sysfs packet-rate (polling approximation of V1's service time)
+ *   blk     procfs /proc/diskstats field 13 (io_ticks)
+ *   mbw     resctrl mbm_total_bytes (Intel RDT / AMD QoS / ARM MPAM)
+ *   llcmr   perf_event_open HW_CACHE (references, misses)
+ *   llcocc  resctrl llc_occupancy
+ *   cpu     procfs /proc/<pid>/stat (utime + stime)
  *
- * No kernel module, no debuginfo, no framework dependency.
+ * Metrics that cannot be collected on the current platform degrade to NaN
+ * and are printed as "--" (text) or empty (csv) rather than zero.
  *
- * Usage: sudo ./intp-hybrid -p <PID> -i <interval_ms> [-o csv|text]
- *
- * Equivalent to: sudo stap -g intp.stp <PID> <interval_ms>
+ * Usage: sudo ./intp-hybrid -p <PID> -i <interval_ms> [-o text|csv]
+ *                           [-n <iface>] [-d <disk>]
  */
 
 #include <stdio.h>
@@ -26,44 +25,9 @@
 #include <signal.h>
 #include <time.h>
 #include <errno.h>
-
-/* Forward declarations for per-metric modules */
-/* TODO: Create a shared header (intp.h) with these declarations */
-
-/* netp.c */
-extern int netp_init(const char *iface, long nic_speed_mbps);
-extern double netp_sample(void);
-
-/* nets.c */
-extern int nets_init(const char *iface);
-extern double nets_sample(void);
-
-/* blk.c */
-extern int blk_init(const char *device);
-extern double blk_sample(void);
-
-/* mbw.c */
-extern int mbw_init(long max_bw_mbps);
-extern double mbw_sample(void);
-
-/* llcmr.c */
-extern int llcmr_init(pid_t target_pid);
-extern double llcmr_sample(void);
-extern void llcmr_cleanup(void);
-
-/* llcocc.c */
-extern int llcocc_init(pid_t target_pid, long llc_size_kb);
-extern double llcocc_sample(void);
-
-/* cpu.c */
-extern int cpu_init(pid_t target_pid);
-extern double cpu_sample(void);
-
-/* detect.c */
-extern long detect_nic_speed(const char *iface);
-extern long detect_llc_size_kb(void);
-extern long detect_mem_bw_mbps(void);
-extern const char *detect_default_iface(void);
+#include <math.h>
+#include "src/intp.h"
+#include "src/resctrl.h"
 
 static volatile sig_atomic_t running = 1;
 
@@ -85,14 +49,34 @@ static void usage(const char *prog)
     fprintf(stderr, "  -h, --help               Show this help\n");
 }
 
+static void print_field(double v, int csv)
+{
+    if (csv) {
+        if (isnan(v)) printf(",");
+        else          printf(",%.2f", v);
+    } else {
+        if (isnan(v)) printf("  --  ");
+        else          printf("  %6.2f", v);
+    }
+}
+
+static void timespec_add_ms(struct timespec *ts, int ms)
+{
+    ts->tv_sec  += ms / 1000;
+    ts->tv_nsec += (ms % 1000) * 1000000L;
+    if (ts->tv_nsec >= 1000000000L) {
+        ts->tv_sec  += ts->tv_nsec / 1000000000L;
+        ts->tv_nsec %= 1000000000L;
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    /* TODO: Implement argument parsing */
-    pid_t target_pid = 0;
-    int interval_ms = 1000;
+    pid_t       target_pid    = 0;
+    int         interval_ms   = 1000;
     const char *output_format = "text";
-    const char *nic_iface = NULL;
-    const char *disk_device = NULL;
+    const char *nic_iface     = NULL;
+    const char *disk_device   = NULL;
 
     static struct option long_opts[] = {
         {"pid",      required_argument, NULL, 'p'},
@@ -105,23 +89,14 @@ int main(int argc, char *argv[])
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:i:o:n:d:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:i:o:n:d:h",
+                              long_opts, NULL)) != -1) {
         switch (opt) {
-        case 'p':
-            target_pid = (pid_t)atoi(optarg);
-            break;
-        case 'i':
-            interval_ms = atoi(optarg);
-            break;
-        case 'o':
-            output_format = optarg;
-            break;
-        case 'n':
-            nic_iface = optarg;
-            break;
-        case 'd':
-            disk_device = optarg;
-            break;
+        case 'p': target_pid    = (pid_t)atoi(optarg); break;
+        case 'i': interval_ms   = atoi(optarg);        break;
+        case 'o': output_format = optarg;              break;
+        case 'n': nic_iface     = optarg;              break;
+        case 'd': disk_device   = optarg;              break;
         case 'h':
         default:
             usage(argv[0]);
@@ -134,64 +109,111 @@ int main(int argc, char *argv[])
         usage(argv[0]);
         return 1;
     }
+    if (interval_ms < 1) {
+        fprintf(stderr, "Error: interval must be >= 1 ms\n");
+        return 1;
+    }
+    int csv = (strcmp(output_format, "csv") == 0);
 
-    /* TODO: Auto-detect hardware parameters */
     if (nic_iface == NULL)
         nic_iface = detect_default_iface();
 
     long nic_speed = detect_nic_speed(nic_iface);
-    long llc_size = detect_llc_size_kb();
-    long mem_bw = detect_mem_bw_mbps();
+    long llc_size  = detect_llc_size_kb();
+    long mem_bw    = detect_mem_bw_mbps();
 
-    /* TODO: Initialize all metric collectors */
-    /* netp_init(nic_iface, nic_speed); */
-    /* nets_init(nic_iface); */
-    /* blk_init(disk_device); */
-    /* mbw_init(mem_bw); */
-    /* llcmr_init(target_pid); */
-    /* llcocc_init(target_pid, llc_size); */
-    /* cpu_init(target_pid); */
+    fprintf(stderr,
+            "[detect] iface=%s nic_speed=%ld Mbps "
+            "llc=%ld KB mem_bw=%ld MB/s\n",
+            nic_iface, nic_speed, llc_size, mem_bw);
 
-    (void)nic_speed;
-    (void)llc_size;
-    (void)mem_bw;
-    (void)output_format;
-    (void)disk_device;
+    /* resctrl group once; mbw + llcocc share it. Failure is not fatal. */
+    int resctrl_ok = (resctrl_setup(target_pid) == 0);
+
+    /* Init metrics. Each returns -1 on unavailable and will yield NaN. */
+    int cpu_ok    = (cpu_init(target_pid) == 0);
+    int netp_ok   = (netp_init(nic_iface, nic_speed) == 0);
+    int nets_ok   = (nets_init(nic_iface) == 0);
+    int blk_ok    = (blk_init(disk_device) == 0);
+    int mbw_ok    = resctrl_ok && (mbw_init(mem_bw) == 0);
+    int llcocc_ok = resctrl_ok && (llcocc_init(target_pid, llc_size) == 0);
+    int llcmr_ok  = (llcmr_init(target_pid) == 0);
+
+    fprintf(stderr,
+            "[status] cpu=%s netp=%s nets=%s blk=%s(%s) "
+            "mbw=%s llcmr=%s llcocc=%s\n",
+            cpu_ok    ? "on" : "off",
+            netp_ok   ? "on" : "off",
+            nets_ok   ? "on" : "off",
+            blk_ok    ? "on" : "off",
+            blk_ok    ? blk_device_name() : "-",
+            mbw_ok    ? "on" : "off",
+            llcmr_ok  ? "on" : "off",
+            llcocc_ok ? "on" : "off");
 
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    /* TODO: Print header */
-    printf("# IntP Hybrid Profiler -- PID %d, interval %d ms\n",
-           target_pid, interval_ms);
-    printf("# netp  nets  blk  mbw  llcmr  llcocc  cpu\n");
+    if (csv) {
+        printf("time_ms,netp,nets,blk,mbw,llcmr,llcocc,cpu\n");
+    } else {
+        printf("# IntP Hybrid Profiler (V4) -- PID %d, interval %d ms\n",
+               target_pid, interval_ms);
+        printf("# time_ms   netp    nets    blk     mbw    llcmr   llcocc    cpu\n");
+    }
+    fflush(stdout);
 
-    /* TODO: Main polling loop */
-    struct timespec sleep_ts = {
-        .tv_sec  = interval_ms / 1000,
-        .tv_nsec = (interval_ms % 1000) * 1000000L
-    };
+    struct timespec start, wake;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    wake = start;
+    timespec_add_ms(&wake, interval_ms);
 
     while (running) {
-        /* TODO: Sample all metrics */
-        /* double v_netp   = netp_sample(); */
-        /* double v_nets   = nets_sample(); */
-        /* double v_blk    = blk_sample(); */
-        /* double v_mbw    = mbw_sample(); */
-        /* double v_llcmr  = llcmr_sample(); */
-        /* double v_llcocc = llcocc_sample(); */
-        /* double v_cpu    = cpu_sample(); */
+        if (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wake, NULL) != 0) {
+            if (!running) break;
+        }
+        timespec_add_ms(&wake, interval_ms);
 
-        /* TODO: Output in IntP-compatible format */
-        /* printf("%.2f  %.2f  %.2f  %.2f  %.2f  %.2f  %.2f\n",
-               v_netp, v_nets, v_blk, v_mbw, v_llcmr, v_llcocc, v_cpu); */
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long elapsed_ms = (now.tv_sec  - start.tv_sec)  * 1000L
+                        + (now.tv_nsec - start.tv_nsec) / 1000000L;
 
-        nanosleep(&sleep_ts, NULL);
+        /* Check target still exists; exit cleanly if it's gone. */
+        char procdir[64];
+        snprintf(procdir, sizeof(procdir), "/proc/%d", (int)target_pid);
+        if (access(procdir, F_OK) != 0) {
+            fprintf(stderr, "[main] target PID %d exited\n", (int)target_pid);
+            break;
+        }
+
+        double v_netp   = netp_sample();
+        double v_nets   = nets_sample();
+        double v_blk    = blk_sample();
+        double v_mbw    = mbw_sample();
+        double v_llcmr  = llcmr_sample();
+        double v_llcocc = llcocc_sample();
+        double v_cpu    = cpu_sample();
+
+        if (csv) {
+            printf("%ld", elapsed_ms);
+        } else {
+            printf("%9ld", elapsed_ms);
+        }
+        print_field(v_netp,   csv);
+        print_field(v_nets,   csv);
+        print_field(v_blk,    csv);
+        print_field(v_mbw,    csv);
+        print_field(v_llcmr,  csv);
+        print_field(v_llcocc, csv);
+        print_field(v_cpu,    csv);
+        printf("\n");
+        fflush(stdout);
     }
 
-    /* TODO: Cleanup */
-    /* llcmr_cleanup(); */
+    llcmr_cleanup();
 
-    printf("# IntP Hybrid Profiler stopped\n");
+    if (!csv)
+        fprintf(stderr, "# IntP Hybrid Profiler stopped\n");
     return 0;
 }

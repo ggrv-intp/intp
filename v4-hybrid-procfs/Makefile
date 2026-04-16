@@ -2,8 +2,8 @@
 # No framework dependencies -- pure C with Linux kernel interfaces
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -O2 -std=c11 -D_GNU_SOURCE
-LDFLAGS = -lpthread
+CFLAGS  = -Wall -Wextra -O2 -std=c11 -D_GNU_SOURCE -Isrc
+LDFLAGS = -lpthread -lm
 
 TARGET  = intp-hybrid
 SRCS    = intp-hybrid.c \
@@ -14,7 +14,8 @@ SRCS    = intp-hybrid.c \
           src/llcmr.c \
           src/llcocc.c \
           src/cpu.c \
-          src/detect.c
+          src/detect.c \
+          src/resctrl.c
 OBJS    = $(SRCS:.c=.o)
 
 .PHONY: all clean
