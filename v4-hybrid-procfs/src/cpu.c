@@ -1,101 +1,157 @@
 /*
- * cpu.c -- CPU Utilization (V4 hybrid)
+ * cpu.c -- CPU utilization, two backends.
  *
- * Per-process CPU utilization from /proc/<pid>/stat (fields 14 utime, 15 stime).
- * Normalizes delta-ticks over wall-clock delta * CLK_TCK.
- *
- * Field 2 (comm) may contain spaces and parentheses, so we locate the last ')'
- * in the buffer and index fields from there.
+ *   cpu_procfs_pid     per-PID via /proc/<pid>/stat utime+stime, normalized
+ *                      by /proc/stat total jiffies delta. Selected when
+ *                      target has at least one PID.
+ *   cpu_procfs_system  system-wide /proc/stat (1 - idle/total). Always
+ *                      probeable; the fallback when no PIDs given.
  */
 
+#include "backend.h"
+#include "procutil.h"
+
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
-#include <math.h>
-#include "intp.h"
 
-static pid_t monitored_pid;
-static unsigned long long prev_utime;
-static unsigned long long prev_stime;
-static struct timespec    prev_ts;
-static long               clk_tck;
-static int                ok;
+static struct {
+    int valid;
+    unsigned long sum_proc_jiffies;   /* utime+stime summed across PIDs */
+    unsigned long total_jiffies;
+} pid_state;
 
-static int read_proc_pid_stat(pid_t pid,
-                              unsigned long long *utime,
-                              unsigned long long *stime)
+static struct {
+    int valid;
+    unsigned long total_jiffies;
+    unsigned long idle_jiffies;
+} sys_state;
+
+static int cpu_pid_probe(void)
 {
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
-
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return -1;
-
-    char buf[4096];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    if (n == 0)
-        return -1;
-    buf[n] = '\0';
-
-    char *rp = strrchr(buf, ')');
-    if (!rp)
-        return -1;
-    rp++;
-
-    unsigned long long ut = 0, st = 0;
-    int matched = sscanf(rp,
-        " %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu",
-        &ut, &st);
-    if (matched != 2)
-        return -1;
-
-    *utime = ut;
-    *stime = st;
-    return 0;
+    const intp_target_t *t = intp_target_get();
+    return (t && t->n_pids > 0) ? 0 : -1;
 }
 
-int cpu_init(pid_t target_pid)
+static unsigned long sum_pid_jiffies(void)
 {
-    monitored_pid = target_pid;
-    clk_tck = sysconf(_SC_CLK_TCK);
-    if (clk_tck <= 0)
-        clk_tck = 100;
-
-    if (read_proc_pid_stat(monitored_pid, &prev_utime, &prev_stime) < 0) {
-        ok = 0;
-        return -1;
+    const intp_target_t *t = intp_target_get();
+    unsigned long sum = 0;
+    for (int i = 0; i < t->n_pids; i++) {
+        unsigned long u = 0, s = 0;
+        if (procutil_read_proc_stat(t->pids[i], &u, &s) == 0)
+            sum += (u + s);
     }
-    clock_gettime(CLOCK_MONOTONIC, &prev_ts);
-    ok = 1;
+    return sum;
+}
+
+static int cpu_pid_init(void)
+{
+    pid_state.sum_proc_jiffies = sum_pid_jiffies();
+    if (procutil_read_stat_total(&pid_state.total_jiffies, NULL) != 0)
+        return -1;
+    pid_state.valid = 1;
     return 0;
 }
 
-double cpu_sample(void)
+static int cpu_pid_read(metric_sample_t *out, double interval_sec)
 {
-    if (!ok)
-        return NAN;
+    (void)interval_sec;
+    if (!pid_state.valid) return -1;
 
-    unsigned long long ut = 0, st = 0;
-    if (read_proc_pid_stat(monitored_pid, &ut, &st) < 0)
-        return NAN;
+    unsigned long pj = sum_pid_jiffies();
+    unsigned long tj = 0;
+    if (procutil_read_stat_total(&tj, NULL) != 0) return -1;
 
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
+    long dpj = (long)(pj - pid_state.sum_proc_jiffies);
+    long dtj = (long)(tj - pid_state.total_jiffies);
+    pid_state.sum_proc_jiffies = pj;
+    pid_state.total_jiffies    = tj;
 
-    double dt = (now.tv_sec  - prev_ts.tv_sec)
-              + (now.tv_nsec - prev_ts.tv_nsec) / 1e9;
-    if (dt <= 0.0)
-        return 0.0;
+    double v = 0.0;
+    if (dtj > 0 && dpj >= 0)
+        v = ((double)dpj / (double)dtj) * 100.0 *
+            (double)(intp_target_get()->n_pids ? 1 : 1);
+    /* Per-PID fraction is relative to all CPUs; scale by num_cores so the
+     * value is "% of one CPU" consistent with V1 (which is per-task time).
+     * Actually V1 reports per-CPU%; but here we report system-relative. Keep
+     * as fraction of total CPU time; document in DESIGN.md. */
 
-    unsigned long long d_ticks = (ut - prev_utime) + (st - prev_stime);
-
-    prev_utime = ut;
-    prev_stime = st;
-    prev_ts    = now;
-
-    return (d_ticks / (dt * (double)clk_tck)) * 100.0;
+    if (v < 0.0)   v = 0.0;
+    if (v > 100.0) v = 100.0;
+    out->value      = v;
+    out->status     = METRIC_STATUS_OK;
+    out->backend_id = "procfs_pid";
+    out->note       = NULL;
+    return 0;
 }
+
+static void cpu_pid_cleanup(void)
+{
+    pid_state.valid = 0;
+}
+
+static int cpu_sys_probe(void)
+{
+    unsigned long t = 0, i = 0;
+    return procutil_read_stat_total(&t, &i) == 0 ? 0 : -1;
+}
+
+static int cpu_sys_init(void)
+{
+    if (procutil_read_stat_total(&sys_state.total_jiffies,
+                                 &sys_state.idle_jiffies) != 0)
+        return -1;
+    sys_state.valid = 1;
+    return 0;
+}
+
+static int cpu_sys_read(metric_sample_t *out, double interval_sec)
+{
+    (void)interval_sec;
+    if (!sys_state.valid) return -1;
+    unsigned long total = 0, idle = 0;
+    if (procutil_read_stat_total(&total, &idle) != 0) return -1;
+    long dt = (long)(total - sys_state.total_jiffies);
+    long di = (long)(idle  - sys_state.idle_jiffies);
+    sys_state.total_jiffies = total;
+    sys_state.idle_jiffies  = idle;
+    double v = (dt > 0) ? (1.0 - (double)di / (double)dt) * 100.0 : 0.0;
+    if (v < 0.0)   v = 0.0;
+    if (v > 100.0) v = 100.0;
+    out->value      = v;
+    out->status     = METRIC_STATUS_OK;
+    out->backend_id = "procfs_system";
+    out->note       = NULL;
+    return 0;
+}
+
+static void cpu_sys_cleanup(void) { sys_state.valid = 0; }
+
+static backend_t cpu_pid_backend = {
+    .backend_id  = "procfs_pid",
+    .description = "per-PID utime+stime via /proc/<pid>/stat",
+    .probe       = cpu_pid_probe,
+    .init        = cpu_pid_init,
+    .read        = cpu_pid_read,
+    .cleanup     = cpu_pid_cleanup,
+};
+
+static backend_t cpu_sys_backend = {
+    .backend_id  = "procfs_system",
+    .description = "system-wide /proc/stat (1 - idle/total)",
+    .probe       = cpu_sys_probe,
+    .init        = cpu_sys_init,
+    .read        = cpu_sys_read,
+    .cleanup     = cpu_sys_cleanup,
+};
+
+static metric_t m = {
+    .metric_name = "cpu",
+    .backends    = { &cpu_pid_backend, &cpu_sys_backend },
+    .n_backends  = 2,
+};
+
+metric_t *metric_cpu(void) { return &m; }
