@@ -65,6 +65,10 @@ static int hwcache_probe(void)
 {
     const system_capabilities_t *c = detect_cached();
     if (!c->perf_usable) return -1;
+    /* Inside a VM without PMU passthrough, perf_event_open succeeds but
+     * counters never increment -- reject here so the fallback chain can
+     * run a degraded backend instead. */
+    if (c->env == ENV_VM && !c->pmu_passthrough) return -1;
     /* per-task counters allowed when paranoid <= 1, system-wide needs <= 0 */
     const intp_target_t *t = intp_target_get();
     int needs_sys = (t->n_pids == 0);
@@ -148,6 +152,7 @@ static int raw_probe(void)
 {
     const system_capabilities_t *c = detect_cached();
     if (!c->perf_usable) return -1;
+    if (c->env == ENV_VM && !c->pmu_passthrough) return -1;
     return 0;
 }
 
