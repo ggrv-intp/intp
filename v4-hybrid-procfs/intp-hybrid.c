@@ -80,47 +80,6 @@ static void usage(const char *p)
         p);
 }
 
-static int parse_pids(const char *s, pid_t *out, int max)
-{
-    int n = 0;
-    const char *p = s;
-    while (*p && n < max) {
-        char *end;
-        long v = strtol(p, &end, 10);
-        if (end == p || v <= 0) break;
-        out[n++] = (pid_t)v;
-        if (*end == ',') p = end + 1;
-        else             p = end;
-    }
-    return n;
-}
-
-static int find_pids_by_comm(const char *comm, pid_t *out, int max)
-{
-    DIR *d = opendir("/proc");
-    if (!d) return 0;
-    struct dirent *e;
-    int n = 0;
-    while ((e = readdir(d)) != NULL && n < max) {
-        if (e->d_type != DT_DIR && e->d_type != DT_UNKNOWN) continue;
-        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        char path[320], buf[256];
-        snprintf(path, sizeof(path), "/proc/%.32s/comm", e->d_name);
-        FILE *f = fopen(path, "r");
-        if (!f) continue;
-        if (fgets(buf, sizeof(buf), f)) {
-            size_t len = strlen(buf);
-            while (len && (buf[len-1] == '\n' || buf[len-1] == '\r'))
-                buf[--len] = '\0';
-            if (strcmp(buf, comm) == 0)
-                out[n++] = (pid_t)atoi(e->d_name);
-        }
-        fclose(f);
-    }
-    closedir(d);
-    return n;
-}
-
 static int read_cgroup_pids(const char *cgpath, pid_t *out, int max)
 {
     char p[PATH_MAX];
@@ -279,10 +238,10 @@ int main(int argc, char *argv[])
     while ((c = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
         switch (c) {
         case OPT_PIDS:
-            target.n_pids = parse_pids(optarg, target.pids, INTP_MAX_PIDS);
+            target.n_pids = intp_parse_pid_list(optarg, target.pids, INTP_MAX_PIDS);
             break;
         case OPT_COMM:
-            target.n_pids = find_pids_by_comm(optarg, target.pids, INTP_MAX_PIDS);
+            target.n_pids = intp_find_pids_by_comm(optarg, target.pids, INTP_MAX_PIDS);
             if (target.n_pids == 0)
                 fprintf(stderr, "warning: no PIDs found for comm '%s'\n", optarg);
             break;

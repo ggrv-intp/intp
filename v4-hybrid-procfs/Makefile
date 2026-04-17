@@ -28,7 +28,8 @@ SRCS = \
 
 OBJS = $(SRCS:.c=.o)
 
-TEST_SRCS = tests/test-detect.c tests/test-procutil.c
+TEST_SRCS = tests/test-detect.c tests/test-procutil.c \
+            tests/test-backend-registry.c tests/test-target.c
 TEST_BINS = $(TEST_SRCS:.c=)
 
 .PHONY: all clean tests run-tests deb help
@@ -42,7 +43,11 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Each test binary links the procutil/detect objects it exercises.
-TEST_DEPS = src/detect.o src/procutil.o src/resctrl.o
+TEST_DEPS       = src/detect.o src/procutil.o src/resctrl.o
+# Tests that exercise the backend registry pull in every metric source.
+TEST_DEPS_FULL  = $(TEST_DEPS) src/perfev.o src/backend_registry.o \
+                  src/cpu.o src/netp.o src/nets.o src/blk.o \
+                  src/mbw.o src/llcmr.o src/llcocc.o
 
 tests: $(TEST_BINS)
 
@@ -50,6 +55,12 @@ tests/test-detect: tests/test-detect.c $(TEST_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 tests/test-procutil: tests/test-procutil.c $(TEST_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+tests/test-backend-registry: tests/test-backend-registry.c $(TEST_DEPS_FULL)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+tests/test-target: tests/test-target.c $(TEST_DEPS_FULL)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 run-tests: tests

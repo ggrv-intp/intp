@@ -38,8 +38,10 @@ static const char *resolve_iface(void)
     return detect_default_iface();
 }
 
-static long resolve_speed(const char *iface, int *assumed)
+long netp_resolve_speed(const char *iface, int *assumed_out)
 {
+    int  dummy = 0;
+    int *assumed = assumed_out ? assumed_out : &dummy;
     const intp_target_t *t = intp_target_get();
     if (t && t->nic_speed_bps_override > 0) {
         *assumed = 0;
@@ -83,7 +85,7 @@ static int sysfs_init(void)
              "/sys/class/net/%.63s/statistics/tx_bytes", sf.iface);
     snprintf(sf.rx_path, sizeof(sf.rx_path),
              "/sys/class/net/%.63s/statistics/rx_bytes", sf.iface);
-    sf.nic_speed_bps = resolve_speed(sf.iface, &sf.assumed_speed);
+    sf.nic_speed_bps = netp_resolve_speed(sf.iface, &sf.assumed_speed);
     sf.prev_tx = read_ull(sf.tx_path);
     sf.prev_rx = read_ull(sf.rx_path);
     sf.valid   = 1;
@@ -155,7 +157,7 @@ static int procfs_locate(unsigned long long *rx, unsigned long long *tx)
 static int procfs_init(void)
 {
     snprintf(pf.iface, sizeof(pf.iface), "%s", resolve_iface());
-    pf.nic_speed_bps = resolve_speed(pf.iface, &pf.assumed_speed);
+    pf.nic_speed_bps = netp_resolve_speed(pf.iface, &pf.assumed_speed);
     if (procfs_locate(&pf.prev_rx, &pf.prev_tx) != 0) return -1;
     pf.valid = 1;
     return 0;

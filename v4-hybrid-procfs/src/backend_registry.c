@@ -8,6 +8,7 @@
 #include "backend.h"
 #include "intp.h"
 
+#include <dirent.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,4 +111,47 @@ metric_t **intp_all_metrics(int *n_out)
     all[6] = metric_cpu();
     if (n_out) *n_out = 7;
     return all;
+}
+
+int intp_parse_pid_list(const char *spec, pid_t *out, int max)
+{
+    if (!spec || !out || max <= 0) return 0;
+    int n = 0;
+    const char *p = spec;
+    while (*p && n < max) {
+        char *end;
+        long v = strtol(p, &end, 10);
+        if (end == p || v <= 0) break;
+        out[n++] = (pid_t)v;
+        if (*end == ',') p = end + 1;
+        else             p = end;
+    }
+    return n;
+}
+
+int intp_find_pids_by_comm(const char *comm, pid_t *out, int max)
+{
+    if (!comm || !out || max <= 0) return 0;
+    DIR *d = opendir("/proc");
+    if (!d) return 0;
+    struct dirent *e;
+    int n = 0;
+    while ((e = readdir(d)) != NULL && n < max) {
+        if (e->d_type != DT_DIR && e->d_type != DT_UNKNOWN) continue;
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char path[320], buf[256];
+        snprintf(path, sizeof(path), "/proc/%.32s/comm", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        if (fgets(buf, sizeof(buf), f)) {
+            size_t len = strlen(buf);
+            while (len && (buf[len-1] == '\n' || buf[len-1] == '\r'))
+                buf[--len] = '\0';
+            if (strcmp(buf, comm) == 0)
+                out[n++] = (pid_t)atoi(e->d_name);
+        }
+        fclose(f);
+    }
+    closedir(d);
+    return n;
 }

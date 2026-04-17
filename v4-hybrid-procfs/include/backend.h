@@ -71,4 +71,9 @@ int  metric_force_backend(metric_t *m, const char *backend_id);
 /* Disable a metric entirely (--disable-metric). */
 void metric_disable(metric_t *m);
 
+/* Public helpers shared with the unit tests -- safe to call at startup. */
+int  intp_parse_pid_list(const char *spec, pid_t *out, int max);
+int  intp_find_pids_by_comm(const char *comm, pid_t *out, int max);
+long netp_resolve_speed(const char *iface, int *assumed_out);
+
 #endif /* INTP_BACKEND_H */
