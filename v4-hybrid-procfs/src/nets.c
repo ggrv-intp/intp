@@ -152,38 +152,48 @@ static void softirq_cleanup(void) { sf.valid = 0; }
 
 static struct {
     int                valid;
-    char               iface[64];
-    unsigned long      prev_packets;
+    unsigned long      prev_packets_sum;
     int                num_cores;
 } tp;
 
-static int throughput_probe(void)
+/* True if the interface should be excluded from the aggregate: loopback and
+ * common virtual/bridge/container devices that would double-count traffic
+ * already seen on the physical NIC. */
+static int iface_is_virtual(const char *name)
 {
-    /* Always usable when /proc/net/dev is readable. */
-    netdev_entry_t e[1];
-    return procutil_read_netdev(e, 1) >= 1 ? 0 : -1;
+    if (!name || !name[0]) return 1;
+    if (strcmp(name, "lo") == 0) return 1;
+    if (strncmp(name, "docker", 6) == 0) return 1;
+    if (strncmp(name, "br-",    3) == 0) return 1;
+    if (strncmp(name, "virbr",  5) == 0) return 1;
+    if (strncmp(name, "veth",   4) == 0) return 1;
+    return 0;
 }
 
-static int read_iface_packets(const char *iface, unsigned long *pkts)
+static int sum_phys_packets(unsigned long *out_sum)
 {
     netdev_entry_t es[32];
     int n = procutil_read_netdev(es, 32);
-    if (n <= 0) return -1;
+    if (n < 0) return -1;
+    unsigned long sum = 0;
     for (int i = 0; i < n; i++) {
-        if (strcmp(es[i].iface, iface) == 0) {
-            *pkts = es[i].rx_packets + es[i].tx_packets;
-            return 0;
-        }
+        if (iface_is_virtual(es[i].iface)) continue;
+        sum += es[i].rx_packets + es[i].tx_packets;
     }
-    return -1;
+    *out_sum = sum;
+    return 0;
+}
+
+static int throughput_probe(void)
+{
+    /* Usable whenever /proc/net/dev is readable (any Linux). */
+    netdev_entry_t e[1];
+    return procutil_read_netdev(e, 1) >= 0 ? 0 : -1;
 }
 
 static int throughput_init(void)
 {
-    const intp_target_t *t = intp_target_get();
-    snprintf(tp.iface, sizeof(tp.iface), "%s",
-             (t && t->iface && t->iface[0]) ? t->iface : detect_default_iface());
-    if (read_iface_packets(tp.iface, &tp.prev_packets) != 0) return -1;
+    if (sum_phys_packets(&tp.prev_packets_sum) != 0) return -1;
     tp.num_cores = detect_cached()->num_cores;
     if (tp.num_cores <= 0) tp.num_cores = 1;
     tp.valid = 1;
@@ -194,13 +204,14 @@ static int throughput_read(metric_sample_t *out, double interval_sec)
 {
     if (!tp.valid || interval_sec <= 0) return -1;
     unsigned long pkts = 0;
-    if (read_iface_packets(tp.iface, &pkts) != 0) return -1;
-    long delta = (long)(pkts - tp.prev_packets);
-    tp.prev_packets = pkts;
+    if (sum_phys_packets(&pkts) != 0) return -1;
+    long delta = (long)(pkts - tp.prev_packets_sum);
+    tp.prev_packets_sum = pkts;
+    if (delta < 0) delta = 0;
 
-    /* Assume 1 microsecond of CPU time per packet on modern x86_64 NICs.
-     * busy_seconds = pkts/sec * 1e-6. Express as percent of one CPU; then
-     * divide by num_cores so the metric is a system-wide percentage. */
+    /* Assume 1 microsecond of CPU service time per packet. The utilization of
+     * one CPU is (pps * 1e-6). Divide by num_cores to express as a system-wide
+     * percentage in the same units as the softirq backend. */
     double pps          = (double)delta / interval_sec;
     double busy_per_cpu = pps * 1.0e-6 * 100.0;
     double v            = busy_per_cpu / (double)tp.num_cores;
@@ -209,7 +220,7 @@ static int throughput_read(metric_sample_t *out, double interval_sec)
     out->value      = v;
     out->status     = METRIC_STATUS_DEGRADED;
     out->backend_id = "procfs_throughput";
-    out->note       = "fixed_1us_per_packet_estimate";
+    out->note       = "throughput_estimate";
     return 0;
 }
 
@@ -224,7 +235,7 @@ static backend_t b_softirq = {
 
 static backend_t b_throughput = {
     .backend_id  = "procfs_throughput",
-    .description = "throughput * fixed 1us/packet kernel service time",
+    .description = "/proc/net/dev packets/sec aggregated * 1us/packet estimate",
     .probe = throughput_probe, .init = throughput_init,
     .read  = throughput_read,   .cleanup = throughput_cleanup,
 };

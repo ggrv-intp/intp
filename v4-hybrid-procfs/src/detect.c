@@ -13,12 +13,17 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <linux/perf_event.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/utsname.h>
+#include <time.h>
 #include <unistd.h>
 
 static system_capabilities_t g_caps;
@@ -310,12 +315,71 @@ exec_env_t detect_execution_environment(void)
     return ENV_BAREMETAL;
 }
 
+/* Open a PERF_COUNT_HW_CPU_CYCLES counter on the current process, run a short
+ * busy loop, and read the counter. Returns the observed cycle count, or -1 if
+ * perf_event_open / read fails. Always closes the fd before returning. */
+static long pmu_probe_cycles(void)
+{
+    struct perf_event_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.type         = PERF_TYPE_HARDWARE;
+    attr.size         = sizeof(attr);
+    attr.config       = PERF_COUNT_HW_CPU_CYCLES;
+    attr.disabled     = 1;
+    attr.exclude_hv   = 1;
+    attr.exclude_idle = 1;
+
+    int fd = (int)syscall(__NR_perf_event_open, &attr, 0, -1, -1, 0UL);
+    if (fd < 0) return -1;
+
+    if (ioctl(fd, PERF_EVENT_IOC_RESET, 0) < 0 ||
+        ioctl(fd, PERF_EVENT_IOC_ENABLE, 0) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    /* Spin for ~10 ms of monotonic time. The volatile sink prevents the
+     * compiler from eliminating the loop. 10 ms on any modern CPU produces
+     * tens of millions of cycles when the PMU is actually counting. */
+    struct timespec t0, now;
+    if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+        close(fd);
+        return -1;
+    }
+    volatile unsigned long sink = 0;
+    do {
+        for (int i = 0; i < 1000; i++) sink += (unsigned long)i;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) break;
+    } while ((now.tv_sec  - t0.tv_sec)  * 1000000000L +
+             (now.tv_nsec - t0.tv_nsec) < 10000000L);
+    (void)sink;
+
+    if (ioctl(fd, PERF_EVENT_IOC_DISABLE, 0) < 0) {
+        close(fd);
+        return -1;
+    }
+    uint64_t cycles = 0;
+    ssize_t n = read(fd, &cycles, sizeof(cycles));
+    close(fd);
+    if (n != (ssize_t)sizeof(cycles)) return -1;
+    return (long)cycles;
+}
+
 int detect_pmu_passthrough(void)
 {
+    /* Bare-metal: always assume the PMU is usable. Callers that actually
+     * need to open a counter will surface a specific error. */
     if (detect_execution_environment() != ENV_VM) return 1;
-    /* Inside a VM, the PMU is "passed through" if perf_event_paranoid is
-     * readable AND we can open a basic event. Cheap proxy: file presence. */
-    return detect_perf_available();
+
+    /* Inside a VM, perf_event_open can succeed even when the underlying PMU
+     * is not passed through -- the counter will simply never increment. An
+     * active probe catches this: run a 10 ms busy loop while a hardware
+     * cycle counter is enabled and see whether it moved. */
+    if (!detect_perf_available()) return 0;
+    long cycles = pmu_probe_cycles();
+    if (cycles < 0)    return 0;   /* open / read failed */
+    if (cycles < 1000) return 0;   /* counter frozen -> no passthrough */
+    return 1;
 }
 
 long detect_nic_speed_bps(const char *iface)
@@ -542,9 +606,11 @@ void print_capabilities(const system_capabilities_t *c, FILE *out)
     fprintf(out, "  model           %s\n", c->cpu_model);
     fprintf(out, "  sockets/cores   %d / %d\n", c->num_sockets, c->num_cores);
     fprintf(out, "  kernel          %d.%d\n", c->kernel_major, c->kernel_minor);
-    fprintf(out, "  environment     %s%s\n", env_name(c->env),
-            c->env == ENV_VM
-                ? (c->pmu_passthrough ? " (PMU available)" : " (no PMU)") : "");
+    fprintf(out, "  environment     %s\n", env_name(c->env));
+    const char *pmu_str = "n/a";
+    if (c->env == ENV_BAREMETAL || c->env == ENV_VM)
+        pmu_str = c->pmu_passthrough ? "yes" : "no";
+    fprintf(out, "  pmu_passthrough: %s\n", pmu_str);
     fprintf(out, "  resctrl mounted %s\n",
             detect_resctrl_mounted() ? "yes" : "no");
     fprintf(out, "  resctrl usable  %s\n", c->resctrl_usable ? "yes" : "no");

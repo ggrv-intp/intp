@@ -376,6 +376,19 @@ int main(int argc, char *argv[])
             const char *desc = m->active ? m->active->description : "no backend probed successfully";
             printf("  %-7s %-22s %s\n", m->metric_name, bid, desc);
         }
+        printf("\n# backend candidates (ordered by priority):\n");
+        for (int i = 0; i < n_metrics; i++) {
+            metric_t *m = all[i];
+            printf("%s:\n", m->metric_name);
+            for (int j = 0; j < m->n_backends; j++) {
+                backend_t *b = m->backends[j];
+                if (!b) continue;
+                const char *mark = (m->active == b) ? "*" : " ";
+                printf("  %s %-22s %s\n",
+                       mark, b->backend_id,
+                       b->description ? b->description : "");
+            }
+        }
         return 0;
     }
 
