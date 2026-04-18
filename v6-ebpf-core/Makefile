@@ -50,8 +50,7 @@ BPF_OBJ     := $(SRC_DIR)/intp.bpf.o
 BPF_SKEL    := $(SRC_DIR)/intp.skel.h
 VMLINUX_H   := $(SRC_DIR)/vmlinux.h
 
-USER_SRCS   := $(SRC_DIR)/intp.c $(SRC_DIR)/intp_args.c \
-               $(RESCTRL_DIR)/resctrl.c $(DETECT_DIR)/detect.c
+USER_SRCS   := $(SRC_DIR)/intp.c $(DETECT_DIR)/detect.c
 USER_OBJS   := $(USER_SRCS:.c=.o)
 
 BINARY      := intp-ebpf
@@ -102,16 +101,7 @@ skeleton: $(BPF_SKEL)
 
 # Step 4: userspace objects depend on the skeleton.
 $(SRC_DIR)/intp.o: $(SRC_DIR)/intp.c $(BPF_SKEL) $(SRC_DIR)/intp.bpf.h \
-                   $(SRC_DIR)/intp_args.h $(RESCTRL_DIR)/resctrl.h \
                    $(DETECT_DIR)/detect.h
-	@echo "  CC       $@"
-	@$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
-
-$(SRC_DIR)/intp_args.o: $(SRC_DIR)/intp_args.c $(SRC_DIR)/intp_args.h
-	@echo "  CC       $@"
-	@$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
-
-$(RESCTRL_DIR)/resctrl.o: $(RESCTRL_DIR)/resctrl.c $(RESCTRL_DIR)/resctrl.h
 	@echo "  CC       $@"
 	@$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
