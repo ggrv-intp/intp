@@ -34,6 +34,14 @@ struct {
     __type(value, struct intp_config);
 } intp_cfg_map SEC(".maps");
 
+/* Per-request issue timestamp, keyed by request pointer for block svctm. */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u64);
+    __type(value, __u64);
+} rq_start SEC(".maps");
+
 /* -------------------------------------------------------------- Helpers */
 
 static __always_inline struct intp_config *intp_cfg(void)
@@ -113,6 +121,57 @@ int tp_netif_receive_skb(struct trace_event_raw_net_dev_template *ctx)
     fill_header(&e->hdr, INTP_EVENT_NET_RECV);
     e->bytes = BPF_CORE_READ(ctx, len);
     e->_pad  = 0;
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+/* =====================================================================
+ * blk -- block I/O utilization
+ * ===================================================================== */
+
+SEC("tracepoint/block/block_rq_issue")
+int tp_block_rq_issue(struct trace_event_raw_block_rq *ctx)
+{
+    /*
+     * sector uniquely identifies the request at the moment of issue
+     * within a given device. For svctm we really want the request
+     * pointer, but that isn't exposed in the tracepoint record. Using
+     * (dev << 32) | sector as the key is good enough in practice.
+     */
+    __u64 dev_sec = ((__u64)BPF_CORE_READ(ctx, dev) << 32)
+                   | BPF_CORE_READ(ctx, sector);
+    __u64 ts = bpf_ktime_get_ns();
+    bpf_map_update_elem(&rq_start, &dev_sec, &ts, BPF_ANY);
+    return 0;
+}
+
+SEC("tracepoint/block/block_rq_complete")
+int tp_block_rq_complete(struct trace_event_raw_block_rq_completion *ctx)
+{
+    if (!should_monitor_current()) return 0;
+
+    __u64 dev_sec = ((__u64)BPF_CORE_READ(ctx, dev) << 32)
+                   | BPF_CORE_READ(ctx, sector);
+    __u64 now = bpf_ktime_get_ns();
+    __u64 svctm = 0;
+    __u64 *start_ts = bpf_map_lookup_elem(&rq_start, &dev_sec);
+    if (start_ts) {
+        svctm = now - *start_ts;
+        bpf_map_delete_elem(&rq_start, &dev_sec);
+    }
+
+    struct intp_block_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+
+    fill_header(&e->hdr, INTP_EVENT_BLOCK_COMPLETE);
+    e->hdr.ts_ns   = now;
+    e->bytes       = BPF_CORE_READ(ctx, nr_sector) * 512;
+    e->_pad        = 0;
+    e->svctm_ns    = svctm;
+    __u32 dev      = BPF_CORE_READ(ctx, dev);
+    e->dev_major   = dev >> 20;
+    e->dev_minor   = dev & 0xfffff;
 
     bpf_ringbuf_submit(e, 0);
     return 0;
