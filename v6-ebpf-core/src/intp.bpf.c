@@ -42,6 +42,14 @@ struct {
     __type(value, __u64);
 } rq_start SEC(".maps");
 
+/* Per-task on-CPU start timestamp, keyed by tid. */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 32768);
+    __type(key, __u32);
+    __type(value, __u64);
+} task_oncpu_start SEC(".maps");
+
 /* -------------------------------------------------------------- Helpers */
 
 static __always_inline struct intp_config *intp_cfg(void)
@@ -174,5 +182,46 @@ int tp_block_rq_complete(struct trace_event_raw_block_rq_completion *ctx)
     e->dev_minor   = dev & 0xfffff;
 
     bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+/* =====================================================================
+ * cpu -- CPU utilization via sched_switch
+ * ===================================================================== */
+
+SEC("tracepoint/sched/sched_switch")
+int tp_sched_switch(struct trace_event_raw_sched_switch *ctx)
+{
+    struct intp_config *cfg = intp_cfg();
+
+    __u32 prev_pid = BPF_CORE_READ(ctx, prev_pid);
+    __u32 next_pid = BPF_CORE_READ(ctx, next_pid);
+    __u64 now      = bpf_ktime_get_ns();
+
+    /* Finalize the outgoing task's on-CPU interval. */
+    __u64 *start_ts = bpf_map_lookup_elem(&task_oncpu_start, &prev_pid);
+    if (start_ts && pid_in_filter(cfg, prev_pid)) {
+        __u64 delta = now - *start_ts;
+        struct intp_sched_event *e =
+            bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+        if (e) {
+            e->hdr.type   = INTP_EVENT_SCHED_SWITCH;
+            e->hdr.cpu    = bpf_get_smp_processor_id();
+            e->hdr.ts_ns  = now;
+            e->hdr.pid    = prev_pid;
+            e->hdr.tid    = prev_pid;
+            e->prev_pid   = prev_pid;
+            e->next_pid   = next_pid;
+            e->on_cpu_ns  = delta;
+            bpf_ringbuf_submit(e, 0);
+        }
+    }
+    if (start_ts)
+        bpf_map_delete_elem(&task_oncpu_start, &prev_pid);
+
+    /* Start timing the incoming task, unless it is the idle task. */
+    if (next_pid != 0)
+        bpf_map_update_elem(&task_oncpu_start, &next_pid, &now, BPF_ANY);
+
     return 0;
 }
