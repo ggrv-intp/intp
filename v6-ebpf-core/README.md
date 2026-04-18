@@ -1,71 +1,130 @@
-# V6 -- eBPF/CO-RE IntP with libbpf
+# V6 -- Full eBPF/CO-RE IntP Implementation
 
-This is the full eBPF prototype for the dissertation's three-way comparison:
-original IntP (SystemTap) vs refactored IntP vs eBPF prototype.
+The dissertation's Phase 2 prototype: IntP implemented in C with libbpf
+and CO-RE (Compile Once, Run Everywhere). This is the canonical eBPF
+implementation for the three-way head-to-head comparison against V1
+(SystemTap original) and V3 (SystemTap refactored).
 
-## Approach
+## Architecture
 
-Uses C + libbpf with CO-RE (Compile Once Run Everywhere) and BTF (BPF Type
-Format) for portable, safe kernel instrumentation:
+V6 uses eBPF programs written in C, compiled once to portable bytecode,
+and loaded via libbpf with BTF-based runtime relocation. Software
+metrics flow through a single ring buffer; hardware metrics (mbw,
+llcocc) use the resctrl filesystem.
 
-- **CO-RE**: eBPF programs are compiled once and relocated at load time using
-  BTF type information. The same binary runs across different kernel versions
-  without recompilation.
-- **BTF**: The kernel exposes its type information at `/sys/kernel/btf/vmlinux`.
-  This replaces the need for DWARF debuginfo packages.
-- **Verifier safety**: All eBPF programs pass through the kernel verifier before
-  execution, which guarantees no crashes, no infinite loops, no invalid memory
-  access.
+Comparison across variants in the repo:
 
-## Metrics
+- V1 / V3: SystemTap DSL + embedded C, compiled to kernel `.ko`,
+  requires debuginfo.
+- V4: no framework, pure procfs / perf_event_open / resctrl polling.
+- V5: bpftrace DSL (interpreted) + resctrl.
+- **V6: native C eBPF + libbpf skeleton + resctrl (this variant).**
 
-| Metric | eBPF Collection Method | Userspace Augmentation |
-| -------- | ------------------------ | ------------------------ |
-| netp | tracepoint:net:net_dev_xmit, netif_receive_skb | - |
-| nets | kprobe:__dev_queue_xmit, kprobe:napi_complete_done | - |
-| blk | tracepoint:block:block_rq_issue, block_rq_complete | - |
-| mbw | - | resctrl MBM reader |
-| llcmr | perf_event (HW_CACHE counters) | - |
-| llcocc | - | resctrl llc_occupancy reader |
-| cpu | tracepoint:sched:sched_switch | - |
+## Key advantages of V6 over V5 (bpftrace)
 
-Software metrics are collected in-kernel via eBPF programs attached to
-tracepoints and kprobes. Data is passed to userspace via a BPF ring buffer.
-Hardware metrics (mbw, llcocc) use resctrl filesystem readers in userspace.
+- Lower startup overhead: skeleton load, no DSL parse.
+- Full control over ring buffer handling and event aggregation.
+- Lower per-event overhead: no DSL runtime dispatch per probe.
+- Production-grade: matches the architecture of BCC tools, Cilium, Pixie.
 
-## Requirements
+## Key advantages of V6 over V3 (SystemTap)
 
-- Linux kernel 5.8+ with CONFIG_DEBUG_INFO_BTF=y
-- clang >= 11 (for BPF target compilation)
-- libbpf >= 0.8
-- bpftool (for vmlinux.h generation)
-- resctrl filesystem for mbw and llcocc
+- No kernel module: the verifier guarantees safety in userspace.
+- No debuginfo dependency: BTF provides kernel type information.
+- CO-RE: one compile, runs on any kernel 5.8+ (subject to Zhong et al.
+  2025 caveats about inlined/renamed functions).
+- Fast startup (~1 s vs. 10-30 s for SystemTap).
+- Sub-microsecond probe overhead.
 
-## Building
+## Build requirements
+
+- Linux kernel 5.8+ with `CONFIG_DEBUG_INFO_BTF=y`.
+- clang >= 11.
+- libbpf >= 0.8 with development headers.
+- bpftool from `linux-tools-*`.
+- libelf-dev, zlib1g-dev.
+- resctrl filesystem for mbw and llcocc (Intel RDT, AMD QoS Rome+, ARM
+  MPAM on 6.19+).
+
+On Ubuntu 24.04:
 
 ```bash
-make           # Generates vmlinux.h, compiles BPF programs, builds loader
+sudo apt install clang libbpf-dev libelf-dev zlib1g-dev \
+                 linux-tools-common linux-tools-generic
 ```
 
-## Usage
+## Quick start
 
 ```bash
-sudo ./intp-ebpf -p <PID> -i <interval_ms>
+# Build everything: generates vmlinux.h, compiles BPF, builds the binary.
+make
+
+# Print detected capabilities (no root needed for read-only checks).
+sudo ./intp-ebpf --list-capabilities
+
+# Run system-wide, 1-second samples, IntP-compatible TSV output.
+sudo ./intp-ebpf --interval 1
+
+# Monitor specific PIDs for 60 seconds.
+sudo ./intp-ebpf --pids 1234,5678 --interval 1 --duration 60
+
+# Monitor a cgroup v2 path.
+sudo ./intp-ebpf --cgroup /sys/fs/cgroup/myservice --interval 0.5
 ```
+
+## Output format
+
+Byte-compatible with V1's `intp.stp` for downstream IADA integration.
+The leading header line documents which backend supplied each column.
+
+```text
+# v6 ebpf-core -- netp:tracepoint nets:kprobe blk:tracepoint cpu:sched_switch llcmr:perf_event mbw:resctrl llcocc:resctrl
+# kernel 6.17 env=bare-metal
+netp    nets    blk     mbw     llcmr   llcocc  cpu
+12      01      05      23      03      45      67
+```
+
+Alternative formats:
+
+- `--output json` -- line-delimited JSON with timestamps.
+- `--output prometheus` -- scrapable exposition format.
 
 ## Files
 
-- `Makefile` -- Build system (vmlinux.h gen, BPF compile, userspace link)
-- `src/vmlinux.h` -- Generated kernel type definitions (placeholder)
-- `src/intp_kern.bpf.h` -- Shared header (kernel/userspace data structures)
-- `src/intp_kern.bpf.c` -- eBPF kernel programs (one per metric)
-- `src/main.c` -- Userspace loader and metric aggregator
-- `resctrl/mbw.c` -- resctrl MBM reader (userspace)
-- `resctrl/llcocc.c` -- resctrl LLC occupancy reader (userspace)
+- `Makefile` -- build pipeline (BTF dump -> BPF compile -> skeleton gen -> link).
+- `src/intp.bpf.c` -- kernel-side eBPF programs (all metrics).
+- `src/intp.bpf.h` -- types shared between kernel and user.
+- `src/intp.c` -- userspace main (skeleton, ring buffer, output).
+- `src/intp_args.{c,h}` -- CLI argument parser.
+- `src/vmlinux.h` -- generated from kernel BTF by bpftool (git-ignored).
+- `src/intp.skel.h` -- generated libbpf skeleton (git-ignored).
+- `resctrl/resctrl.{c,h}` -- resctrl mon_group helper (hardware metrics).
+- `detect/detect.{c,h}` -- hardware / environment capability detection.
+- `scripts/gen-vmlinux.sh` -- manual BTF -> vmlinux.h dump.
+- `scripts/test-core-portability.sh` -- verify CO-RE load under current kernel.
+- `tests/unit/test-detect.c` -- host-side detection unit test.
+- `tests/integration/test-*.sh` -- load-attach / accuracy / overhead tests.
+
+## Supported platforms
+
+| Platform                     | Software metrics | Hardware metrics |
+|------------------------------|------------------|------------------|
+| Intel Xeon (RDT)             | full (eBPF)      | full (resctrl)   |
+| Intel Consumer               | full (eBPF)      | unavailable      |
+| AMD EPYC Rome+               | full (eBPF)      | full (resctrl)   |
+| AMD EPYC pre-Rome            | full (eBPF)      | unavailable      |
+| ARM Neoverse + MPAM (6.19+)  | full (eBPF)      | full (resctrl)   |
+| ARM Neoverse (no MPAM)       | full (eBPF)      | unavailable      |
+| Container (CAP_BPF)          | full             | resctrl mount    |
+| VM (BTF + PMU passthrough)   | full             | depends on host  |
 
 ## References
 
+- libbpf: <https://github.com/libbpf/libbpf>
 - libbpf-bootstrap: <https://github.com/libbpf/libbpf-bootstrap>
-- Gogge (2023): iprof -- eBPF-based interference profiler
-- Becker et al. (2024): Cloud interference profiling with eBPF
-- Nakryiko, A.: BPF CO-RE reference guide
+- Nakryiko, A. BPF CO-RE reference guide. <https://nakryiko.com/posts/bpf-core-reference-guide/>
+- Gogge, L. M. (2023). `iprof` -- eBPF-based interference profiler. PUCRS.
+- Becker et al. (2024). Cloud interference profiling with eBPF. PUCRS.
+- Landau et al. (2025). PRISM. arXiv:2505.13160.
+- Volpert et al. (ICPE 2025). eBPF vs. SystemTap overhead comparison.
+- Zhong et al. (2025). A study of eBPF CO-RE portability in practice.
