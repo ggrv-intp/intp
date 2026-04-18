@@ -1,100 +1,110 @@
-# V5 Design -- bpftrace IntP
+# V5 Design -- bpftrace + resctrl
 
-## bpftrace vs SystemTap: What Changes
+## Rationale
 
-### What bpftrace CAN do that SystemTap does
+V5 exists to answer a specific research question in the IntP variant
+comparison: *can SystemTap be replaced with a safer, more portable
+scripting framework without dropping to full C/libbpf?* The answer is
+yes, via bpftrace. V5 keeps the SystemTap-like DSL ergonomics while
+inheriting eBPF's verifier-enforced safety and BTF-based portability,
+sitting between V3 (SystemTap + resctrl) and V6 (C/libbpf + resctrl) in
+the variant spectrum.
 
-- Attach to tracepoints (sched, block, net, etc.)
-- Attach to kfuncs/kretfuncs (kernel functions via BTF)
-- Read function arguments and return values
-- Timestamp events and compute latencies
-- Aggregate data with built-in maps (@variable)
-- Filter by PID, TID, or other conditions
-- Access hardware performance counters
+## bpftrace vs SystemTap
 
-### What bpftrace CANNOT do that SystemTap guru mode does
+| Aspect              | SystemTap (V1/V3)               | bpftrace (V5)                  |
+|---------------------|---------------------------------|--------------------------------|
+| Backend             | Compiled kernel module (`.ko`)  | eBPF bytecode                  |
+| Type-info source    | DWARF debuginfo                 | BTF (in-kernel, built-in)      |
+| Safety              | None (guru mode = raw C)        | Verifier-enforced              |
+| Embedded C          | Yes (guru mode)                 | No                             |
+| Startup time        | 10-30s (module compile)         | 1-3s                           |
+| Memory access       | Unchecked pointer deref         | `bpf_probe_read*` only         |
+| Loops               | Arbitrary                       | Bounded / compile-time unrolled|
+| Stack budget        | Kernel stack                    | 512 bytes (BPF)                |
+| MSR access          | Yes (via embedded C)            | No (use resctrl)               |
 
-- **Direct MSR access**: SystemTap guru mode can execute arbitrary C including
-  rdmsr/wrmsr. bpftrace cannot read MSRs. This affects the original llcocc
-  implementation (QOS_L3_OCC MSR). Solution: use resctrl instead.
+Both compile scripts to in-kernel execution; the differentiators are the
+safety boundary and the toolchain weight.
 
-- **Arbitrary memory access**: SystemTap guru mode allows unchecked pointer
-  dereference. bpftrace/eBPF requires all memory access to go through
-  bpf_probe_read(). This is a safety feature, not a limitation.
+## Script design decisions
 
-- **Complex data structures**: SystemTap can traverse linked lists and complex
-  kernel structures. bpftrace can access struct fields (via BTF) but complex
-  traversals require helper functions.
+- **One script per metric, not monolithic.** bpftrace accepts mixed
+  tracepoint / hardware / interval probes in a single script, but the
+  aggregation semantics become tangled. Per-metric scripts are
+  independently testable and debuggable.
+- **Structured JSON output.** Each `.bt` script emits one line per
+  interval on stdout: `{"metric":"<name>", "ts":<ns>, <counters...>}`.
+  The Python aggregator streams the pipes and builds derived metrics
+  centrally, so the bpftrace scripts stay simple counters.
+- **Tracepoints preferred over kprobes.** Tracepoints are stable across
+  kernel versions; kprobes on internal functions break on upgrade.
+- **`interval:s:1` for periodic emission.** Matches IntP's 1-second
+  reporting cadence without the aggregator needing to poll bpftrace.
 
-- **Loops**: eBPF programs have bounded execution. bpftrace unrolls loops at
-  compile time. This means no variable-length iteration within a probe.
+## Orchestrator design
 
-### Key Translation Patterns
+- **Python, not C.** The orchestrator is I/O-bound (reading JSON
+  streams, polling files). C would add complexity without perf benefit.
+- **Threaded.** One reader thread per bpftrace FIFO plus one resctrl
+  polling thread. The main loop only emits rows.
+- **Byte-compatible output.** Seven integer percentages, tab-separated,
+  zero-padded to two digits -- same as V1/V3/V4 for IADA integration.
 
-Original IntP pattern -> bpftrace equivalent:
+## Metric-by-metric translation
 
-1. `probe kernel.function("X") { ... }`
-   -> `kfunc:X { ... }` or `kretfunc:X { ... }`
+| Metric | V1 (SystemTap)                               | V5 (bpftrace)                                    | Fidelity               |
+|--------|----------------------------------------------|--------------------------------------------------|------------------------|
+| netp   | `tracepoint:net:*` accumulators              | `tracepoint:net:*` accumulators                  | Equivalent             |
+| nets   | `__dev_queue_xmit` / `napi_complete_done`    | `net:net_dev_start_xmit` / `napi:napi_poll.work` | Approximation          |
+| blk    | `block:block_rq_issue/_complete`             | Same tracepoints                                 | Equivalent             |
+| cpu    | `sched:sched_switch` with per-CPU accounting | Same tracepoint, per-TID accounting              | Equivalent             |
+| llcmr  | `perf_event` counters (exact)                | `hardware:cache-{refs,misses}:10000` (sampled)   | Sampled, converges     |
+| mbw    | `perf_event` MBM                             | resctrl `mbm_total_bytes`                        | Same as V3/V4          |
+| llcocc | Guru-mode MSR (`QOS_L3_OCC`)                 | resctrl `llc_occupancy`                          | Same as V3/V4          |
 
-2. `probe kernel.trace("net:net_dev_xmit") { ... }`
-   -> `tracepoint:net:net_dev_xmit { ... }`
+## Accuracy trade-offs
 
-3. `%{ /* embedded C */ %}` (guru mode)
-   -> Not available. Use bpftrace built-in functions or resctrl.
+- **llcmr sampling:** bpftrace hardware probes fire every N events (N
+  chosen as 10,000 here); the ratio cancels the period out but jitters
+  more than V4's exact counting. Acceptable for interference detection;
+  for exact ratios prefer V4/V6.
+- **nets service time:** `napi:napi_poll` exposes `args->work` as a
+  proxy for RX stack time, and `net:net_dev_start_xmit ->
+  net:net_dev_xmit` approximates TX service. Absolute values diverge
+  slightly from V1, but the *trend* (utilization shape) tracks closely.
+- **All other metrics:** event-driven and equivalent to V1.
 
-4. `@variable[key] = value` (stats/aggregation)
-   -> `@variable[key] = value` (same syntax, eBPF maps)
+## Overhead analysis
 
-5. `perf_event.counter("cache-misses")`
-   -> `hardware:cache-misses:SAMPLE_PERIOD { ... }`
+- Probe overhead: ~200-500 ns per event, comparable to libbpf-native
+  eBPF (V6) and dominated by verifier-emitted bounds checks.
+- Startup: 1-3 s (script parse + BPF load + verifier) vs
+  SystemTap's 10-30 s module compile.
+- Steady-state: the aggregator is idle between ticks; CPU cost is
+  dominated by bpftrace probe firing, not by the Python loop.
 
-## Metric-by-Metric Translation
+## Per-PID vs system-wide
 
-### netp (Network Physical)
+- Default is system-wide: bpftrace scripts run without filter arguments.
+- Per-PID mode (`--pid 1234`): the orchestrator passes the PID to the
+  resctrl mon_group. Fine-grained per-PID guards inside bpftrace scripts
+  can be added via `if (pid == $1) { ... }` when needed; they are
+  omitted by default to keep overhead low.
 
-Original: probes on netif_receive_skb and net_dev_xmit tracepoints,
-accumulates skb->len per interval.
+## Comparison with V4 (hybrid-procfs)
 
-bpftrace: identical approach using tracepoint:net:* probes.
+- V4 polls kernel counters; V5 captures events.
+- V4 has lower 1-second overhead; V5 captures sub-second bursts.
+- V4 has no framework dependency; V5 depends on bpftrace.
+- Both reuse resctrl for hardware metrics, so they report identical
+  `mbw`/`llcocc` under the same workload.
 
-### nets (Network Stack Service Time)
+## When to choose V5
 
-Original: timestamps packets at dev_queue_xmit entry, measures at
-net_dev_xmit completion. Service time = exit - entry timestamp.
-
-bpftrace: kfunc:__dev_queue_xmit stores timestamp in @start[tid],
-tracepoint:net:net_dev_xmit computes delta. Equivalent fidelity.
-
-### blk (Block I/O)
-
-Original: probes on block request issue and completion tracepoints.
-
-bpftrace: tracepoint:block:block_rq_issue stores timestamp,
-tracepoint:block:block_rq_complete computes service time.
-
-### mbw (Memory Bandwidth)
-
-Original: perf_event for MBM counters.
-
-bpftrace: Cannot directly access MBM counters. Use resctrl filesystem
-(same as V3/V4). The run script reads resctrl in parallel.
-
-### llcmr (LLC Miss Ratio)
-
-Original: perf_event for cache-references and cache-misses.
-
-bpftrace: hardware:cache-misses and hardware:cache-references probes
-with sampling. Compute ratio from accumulated counts.
-
-### llcocc (LLC Occupancy)
-
-Original: embedded C reading cqm_rmid and QOS_L3_OCC MSR.
-
-bpftrace: Cannot access MSRs. Use resctrl filesystem (same as V3/V4).
-
-### cpu (CPU Utilization)
-
-Original: sched_switch tracepoint with per-CPU time accounting.
-
-bpftrace: tracepoint:sched:sched_switch with @cpu_time[pid] tracking.
-Equivalent fidelity.
+- **Over V3 (SystemTap):** when you need safety guarantees, faster
+  startup, or no debuginfo packages.
+- **Over V4 (procfs):** when you need event-driven accuracy or
+  sub-second precision.
+- **Over V6 (libbpf):** when you want script-based iteration without a
+  C toolchain and full CO-RE ceremony.
