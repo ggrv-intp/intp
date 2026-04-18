@@ -331,3 +331,43 @@ int krp_napi_poll_exit(struct pt_regs *ctx)
      */
     return 0;
 }
+
+/* =====================================================================
+ * llcmr -- LLC miss ratio via perf_event BPF programs
+ *
+ * Userspace opens two perf_event counters (HW_CACHE_L3 references and
+ * misses) with a sample period and attaches these programs to each. The
+ * BPF side simply pushes a sampling-rate-scaled record per overflow.
+ * ===================================================================== */
+
+SEC("perf_event")
+int perf_llc_refs(struct bpf_perf_event_data *ctx)
+{
+    if (!should_monitor_current()) return 0;
+
+    struct intp_perf_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+
+    fill_header(&e->hdr, INTP_EVENT_PERF_SAMPLE);
+    e->value     = BPF_CORE_READ(ctx, sample_period);
+    e->perf_type = 0;       /* refs */
+    e->_pad      = 0;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("perf_event")
+int perf_llc_misses(struct bpf_perf_event_data *ctx)
+{
+    if (!should_monitor_current()) return 0;
+
+    struct intp_perf_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+
+    fill_header(&e->hdr, INTP_EVENT_PERF_SAMPLE);
+    e->value     = BPF_CORE_READ(ctx, sample_period);
+    e->perf_type = 1;       /* misses */
+    e->_pad      = 0;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
