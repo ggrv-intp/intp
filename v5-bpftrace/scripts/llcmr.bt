@@ -1,59 +1,41 @@
+#!/usr/bin/env bpftrace
 /*
- * llcmr.bt -- LLC Miss Ratio (V5 bpftrace)
+ * V5 llcmr -- LLC Miss Ratio
  *
- * IntP metric: llcmr (Last-Level Cache miss ratio)
- * Equivalent to: print_cache_report() in v1-original/intp.stp
+ * Equivalent to V1 print_cache_report(). Uses bpftrace hardware probes,
+ * which sample every N events rather than counting exactly (as perf_stat
+ * does). The ratio converges over 1-second intervals but has more noise
+ * than V4's perf_event_open approach.
  *
- * Probes:
- *   hardware:cache-misses:1000000    -- sampled every 1M cache misses
- *   hardware:cache-references:1000000 -- sampled every 1M cache references
+ * Output format:
+ *   {"metric":"llcmr","ts":<ns>,"refs":<N>,"misses":<N>}
  *
- * bpftrace supports hardware performance counter events via the "hardware:"
- * probe type. The number after the event name is the sampling period.
- *
- * Formula:
- *   miss_ratio = (@misses * 100) / @refs
- *   If @refs == 0, miss_ratio = 0
- *
- * Note: hardware event sampling gives an approximation. The sampling period
- * (1000000) means the probe fires once per million events. The count()
- * aggregation counts how many times the probe fired, so:
- *   actual_misses ~= @miss_count * 1000000
- *   actual_refs   ~= @ref_count * 1000000
- *   miss_ratio    = @miss_count / @ref_count * 100
- * (The sampling period cancels out in the ratio.)
- *
- * The original intp.stp uses perf_event counters for the same hardware
- * events but reads exact counts rather than sampling.
- *
- * Usage: sudo bpftrace llcmr.bt
+ * Orchestrator computes: miss_ratio = misses / refs * 100.
  */
 
 BEGIN
 {
-    printf("llcmr: monitoring LLC miss ratio\n");
+    printf("{\"metric\":\"llcmr\",\"ready\":true}\n");
 }
 
-/* TODO: Hardware event probes */
-/* hardware:cache-misses:1000000 */
-/* { */
-/*     @misses = count(); */
-/* } */
+hardware:cache-references:10000
+{
+    @refs = @refs + 10000;
+}
 
-/* hardware:cache-references:1000000 */
-/* { */
-/*     @refs = count(); */
-/* } */
+hardware:cache-misses:10000
+{
+    @misses = @misses + 10000;
+}
 
 interval:s:1
 {
-    /* TODO: Compute miss ratio */
-    /* TODO: The sampling period cancels out: ratio = misses/refs * 100 */
-    /* TODO: Print and reset */
+    printf("{\"metric\":\"llcmr\",\"ts\":%lld,\"refs\":%llu,\"misses\":%llu}\n",
+           nsecs, @refs, @misses);
+    clear(@refs); clear(@misses);
 }
 
 END
 {
-    /* TODO: Clean up */
-    /* clear(@misses); clear(@refs); */
+    clear(@refs); clear(@misses);
 }

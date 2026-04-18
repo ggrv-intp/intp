@@ -1,59 +1,46 @@
+#!/usr/bin/env bpftrace
 /*
- * blk.bt -- Block I/O Utilization (V5 bpftrace)
+ * V5 blk -- Block I/O Utilization
  *
- * IntP metric: blk (block I/O utilization)
- * Equivalent to: print_block_report() in v1-original/intp.stp
+ * Equivalent to V1 print_block_report().
+ * Uses stable tracepoints: block:block_rq_issue, block:block_rq_complete.
  *
- * Probes:
- *   tracepoint:block:block_rq_issue    -- I/O request dispatched to driver
- *   tracepoint:block:block_rq_complete -- I/O request completed by driver
+ * Output format:
+ *   {"metric":"blk","ts":<ns>,"ops":<N>,"total_bytes":<N>,"svctm_sum_ns":<N>}
  *
- * Service time = completion timestamp - issue timestamp
- * Utilization = sum(service_times) / interval * 100
- *
- * The original intp.stp uses the same block tracepoints.
- *
- * Alternative approach (simpler, matches V4):
- *   tracepoint:block:block_rq_complete { @srv_time = avg(args->nr_sector); }
- *   But this gives average sector count, not utilization. The proper approach
- *   timestamps issue/complete pairs.
- *
- * Usage: sudo bpftrace blk.bt
+ * Orchestrator computes: util = svctm_ms * ops_per_sec / 100 (clamped).
  */
 
 BEGIN
 {
-    printf("blk: monitoring block I/O utilization\n");
+    printf("{\"metric\":\"blk\",\"ready\":true}\n");
 }
 
 tracepoint:block:block_rq_issue
 {
-    /* TODO: Store issue timestamp keyed by request pointer */
-    /* @start[args->sector] = nsecs; */
+    @rq_start[args->dev, args->sector] = nsecs;
 }
 
 tracepoint:block:block_rq_complete
 {
-    /* TODO: Compute service time */
-    /* $start = @start[args->sector]; */
-    /* if ($start > 0) { */
-    /*     @blk_service_ns = sum(nsecs - $start); */
-    /*     @blk_count = count(); */
-    /*     delete(@start[args->sector]); */
-    /* } */
-
-    /* TODO: Also track sector count for throughput */
-    /* @blk_sectors = sum(args->nr_sector); */
+    $start = @rq_start[args->dev, args->sector];
+    if ($start != 0) {
+        @svctm_sum = @svctm_sum + (nsecs - $start);
+        delete(@rq_start[args->dev, args->sector]);
+    }
+    @ops = @ops + 1;
+    @total_bytes = @total_bytes + ((uint64)args->nr_sector * 512);
 }
 
 interval:s:1
 {
-    /* TODO: Compute utilization from accumulated service time */
-    /* TODO: Print and reset counters */
+    printf("{\"metric\":\"blk\",\"ts\":%lld,\"ops\":%llu,\"total_bytes\":%llu,\"svctm_sum_ns\":%llu}\n",
+           nsecs, @ops, @total_bytes, @svctm_sum);
+    clear(@ops); clear(@total_bytes); clear(@svctm_sum);
 }
 
 END
 {
-    /* TODO: Clean up maps */
-    /* clear(@start); */
+    clear(@ops); clear(@total_bytes); clear(@svctm_sum);
+    clear(@rq_start);
 }

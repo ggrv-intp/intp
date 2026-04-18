@@ -1,111 +1,183 @@
 #!/bin/bash
 # -----------------------------------------------------------------------------
-# run-intp-bpftrace.sh -- IntP bpftrace Orchestrator (V5)
+# run-intp-bpftrace.sh -- IntP V5 entry point (bpftrace + resctrl)
 #
-# Runs bpftrace scripts for software metrics and the resctrl helper for
-# hardware metrics (mbw, llcocc) in parallel. Aggregates output in
-# IntP-compatible format.
-#
-# Equivalent to: sudo stap -g intp.stp <PID> <interval_ms>
-#
-# Usage: sudo ./run-intp-bpftrace.sh <PID> <interval_ms>
-#
-# Architecture:
-#   - bpftrace intp.bt runs in background collecting software metrics
-#   - resctrl helper runs in background providing mbw and llcocc
-#   - This script reads from both sources and produces combined output
+# Launches the per-metric bpftrace scripts in parallel, each streaming its
+# JSON output into a named pipe, then starts the Python aggregator which
+# combines everything (including resctrl mbw/llcocc) into the IntP TSV
+# format consumed by V1/V3/V4 downstream tooling.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SHARED_DIR="$(cd "$SCRIPT_DIR/../shared" && pwd)"
-RESCTRL_HELPER="$SHARED_DIR/intp-resctrl-helper.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SHARED_DIR="$REPO_ROOT/shared"
+BPFTRACE_BIN="${BPFTRACE:-bpftrace}"
+PYTHON_BIN="${PYTHON:-python3}"
+
+PID=0
+INTERVAL=1
+DURATION=0
+OUTPUT="-"
+LIST_CAPS=0
+HEADER=0
+MON_GROUP="intp-v5"
+
+WORKDIR=""
+AGGREGATOR_PID=""
+BT_PIDS=()
 
 usage() {
-    echo "Usage: $0 <PID> <interval_ms>"
+    cat <<EOF
+Usage: sudo $0 [options]
+
+Options:
+  --pid PID               Monitor a specific PID (default: system-wide).
+  --interval SECONDS      Sampling interval (default: 1).
+  --duration SECONDS      Total duration (default: infinite).
+  --output FILE           Output file (default: stdout).
+  --header                Emit a header line describing the backends.
+  --mon-group NAME        Resctrl mon_group name (default: intp-v5).
+  --list-capabilities     Print detected capabilities and exit.
+  -h, --help              Show this help and exit.
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pid) PID="$2"; shift 2 ;;
+            --interval) INTERVAL="$2"; shift 2 ;;
+            --duration) DURATION="$2"; shift 2 ;;
+            --output) OUTPUT="$2"; shift 2 ;;
+            --header) HEADER=1; shift ;;
+            --mon-group) MON_GROUP="$2"; shift 2 ;;
+            --list-capabilities) LIST_CAPS=1; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
+        esac
+    done
+}
+
+check_dependencies() {
+    if ! command -v "$BPFTRACE_BIN" >/dev/null 2>&1; then
+        echo "Error: bpftrace not found (set BPFTRACE or install the package)" >&2
+        exit 1
+    fi
+    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+        echo "Error: python3 not found" >&2
+        exit 1
+    fi
+    if [[ ! -f /sys/kernel/btf/vmlinux ]]; then
+        echo "Warning: BTF not available; some probes may fail to attach" >&2
+    fi
+}
+
+detect_capabilities() {
+    if [[ -x "$SHARED_DIR/intp-detect.sh" ]]; then
+        "$SHARED_DIR/intp-detect.sh"
+    else
+        echo "# intp-detect.sh not found at $SHARED_DIR" >&2
+    fi
+}
+
+print_capability_table() {
+    local caps
+    caps="$(detect_capabilities)"
+    echo "Backend capability table (V5 bpftrace):"
     echo ""
-    echo "Arguments:"
-    echo "  PID          Target process ID to monitor"
-    echo "  interval_ms  Sampling interval in milliseconds (default: 1000)"
-    exit 1
+    echo "  Metric   Source             Status"
+    echo "  -------  -----------------  ----------"
+    echo "  netp     tracepoint:net     usable"
+    echo "  nets     tracepoint:net     approximation (napi:napi_poll)"
+    echo "  blk      tracepoint:block   usable"
+    echo "  cpu      tracepoint:sched   usable"
+    echo "  llcmr    hardware sampling  usable (sampled, noisier than perf)"
+    local resctrl_state="unavailable"
+    if grep -q '^INTP_RESCTRL_MOUNTED=1' <<<"$caps"; then
+        resctrl_state="usable (resctrl)"
+    fi
+    echo "  mbw      resctrl            $resctrl_state"
+    echo "  llcocc   resctrl            $resctrl_state"
+    echo ""
+    echo "Raw capability snapshot:"
+    echo "$caps" | grep '^INTP_' | sed 's/^/  /'
 }
 
 cleanup() {
-    echo "Stopping IntP bpftrace profiler..."
-    # TODO: Kill background bpftrace process
-    # TODO: Stop resctrl helper
-    if [ -n "${BPFTRACE_PID:-}" ]; then
-        kill "$BPFTRACE_PID" 2>/dev/null || true
-        wait "$BPFTRACE_PID" 2>/dev/null || true
+    local pid
+    if [[ -n "$AGGREGATOR_PID" ]]; then
+        kill "$AGGREGATOR_PID" 2>/dev/null || true
+        wait "$AGGREGATOR_PID" 2>/dev/null || true
     fi
-    "$RESCTRL_HELPER" stop 2>/dev/null || true
-    echo "Stopped."
+    for pid in "${BT_PIDS[@]}"; do
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    done
+    for pid in "${BT_PIDS[@]}"; do
+        [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
+    done
+    if [[ -d "/sys/fs/resctrl/mon_groups/$MON_GROUP" ]]; then
+        rmdir "/sys/fs/resctrl/mon_groups/$MON_GROUP" 2>/dev/null || true
+    fi
+    if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
+        rm -rf "$WORKDIR"
+    fi
 }
 
-# -- Argument parsing ----------------------------------------------------------
-
-TARGET_PID="${1:-}"
-INTERVAL_MS="${2:-1000}"
-
-if [ -z "$TARGET_PID" ]; then
-    echo "Error: PID required"
-    usage
-fi
-
-if ! kill -0 "$TARGET_PID" 2>/dev/null; then
-    echo "Error: Process $TARGET_PID does not exist"
-    exit 1
-fi
-
-# -- Check dependencies --------------------------------------------------------
-
-if ! command -v bpftrace >/dev/null 2>&1; then
-    echo "Error: bpftrace not found. Install with: apt install bpftrace"
-    exit 1
-fi
-
-if [ ! -f /sys/kernel/btf/vmlinux ]; then
-    echo "Warning: BTF not available. Some probes may not work."
-    echo "Rebuild kernel with CONFIG_DEBUG_INFO_BTF=y"
-fi
-
-# -- Set up resctrl for hardware metrics ---------------------------------------
-
-echo "Setting up resctrl monitoring group for PID $TARGET_PID..."
-"$RESCTRL_HELPER" start "$TARGET_PID" || {
-    echo "Warning: resctrl setup failed. mbw and llcocc will return 0."
+launch_bpftrace() {
+    local name="$1"
+    local script="$2"
+    local fifo="$WORKDIR/$name.jsonl"
+    mkfifo "$fifo"
+    (
+        # The FIFO must be opened for reading first, but the Python
+        # aggregator handles that. bpftrace writes JSON lines as they
+        # arrive. -q suppresses the built-in "Attaching N probes" banner.
+        "$BPFTRACE_BIN" -q "$script" >"$fifo" 2>"$WORKDIR/$name.err"
+    ) &
+    BT_PIDS+=("$!")
 }
 
-trap cleanup EXIT INT TERM
+main() {
+    parse_args "$@"
 
-# -- Start bpftrace for software metrics ---------------------------------------
+    if (( LIST_CAPS )); then
+        print_capability_table
+        exit 0
+    fi
 
-echo "Starting bpftrace (software metrics)..."
-# TODO: Start bpftrace intp.bt in background
-# bpftrace "$SCRIPT_DIR/intp.bt" -p "$TARGET_PID" &
-# BPFTRACE_PID=$!
+    check_dependencies
 
-# -- Main aggregation loop -----------------------------------------------------
+    WORKDIR="$(mktemp -d /tmp/intp-bpftrace-XXXXXX)"
+    trap cleanup EXIT INT TERM
 
-INTERVAL_SEC=$(echo "scale=3; $INTERVAL_MS / 1000" | bc)
+    launch_bpftrace netp  "$SCRIPT_DIR/scripts/netp.bt"
+    launch_bpftrace nets  "$SCRIPT_DIR/scripts/nets.bt"
+    launch_bpftrace blk   "$SCRIPT_DIR/scripts/blk.bt"
+    launch_bpftrace cpu   "$SCRIPT_DIR/scripts/cpu.bt"
+    launch_bpftrace llcmr "$SCRIPT_DIR/scripts/llcmr.bt"
 
-echo "# IntP bpftrace profiler -- PID $TARGET_PID, interval ${INTERVAL_MS}ms"
-echo "# netp  nets  blk  mbw  llcmr  llcocc  cpu"
+    local agg_args=(
+        "$SCRIPT_DIR/orchestrator/aggregator.py"
+        --fifo-dir "$WORKDIR"
+        --interval "$INTERVAL"
+        --output "$OUTPUT"
+        --mon-group "$MON_GROUP"
+    )
+    if [[ "$DURATION" != "0" ]]; then
+        agg_args+=(--duration "$DURATION")
+    fi
+    if (( PID > 0 )); then
+        agg_args+=(--pid "$PID")
+    fi
+    if (( HEADER )); then
+        agg_args+=(--header)
+    fi
 
-while kill -0 "$TARGET_PID" 2>/dev/null; do
-    sleep "$INTERVAL_SEC"
+    "$PYTHON_BIN" "${agg_args[@]}" &
+    AGGREGATOR_PID="$!"
+    wait "$AGGREGATOR_PID"
+}
 
-    # TODO: Read software metrics from bpftrace output
-    # TODO: Read hardware metrics from resctrl
-    MBW=$("$RESCTRL_HELPER" read-mbw 2>/dev/null || echo 0)
-    LLCOCC=$("$RESCTRL_HELPER" read-llcocc 2>/dev/null || echo 0)
-
-    # TODO: Combine and output in IntP format
-    # printf "%.2f  %.2f  %.2f  %.2f  %.2f  %.2f  %.2f\n" \
-    #     "$NETP" "$NETS" "$BLK" "$MBW" "$LLCMR" "$LLCOCC" "$CPU"
-
-    echo "TODO: aggregate bpftrace output with resctrl values (mbw=$MBW llcocc=$LLCOCC)"
-done
-
-echo "# Target process $TARGET_PID exited"
+main "$@"
