@@ -1,15 +1,13 @@
 /*
  * intp.c -- userspace main for IntP V6 (eBPF / CO-RE / libbpf).
  *
- * First cut: open + load the BPF skeleton, attach tracepoints/kprobes,
- * push a system-wide config into the PID-filter map, and consume the
- * ring buffer with aggregation per event type. Every 1 s we emit a
- * V1-byte-compatible TSV record.
+ * Extends the first-cut ring buffer consumer with:
+ *   - hybrid resctrl: eBPF cannot read RDT/MPAM MSRs under the verifier,
+ *     so mbw and llcocc go through /sys/fs/resctrl. A mon_group is
+ *     created per run and torn down on exit.
  *
- * llcmr requires attaching the SEC("perf_event") programs to perf fds;
- * that wiring arrives with the resctrl integration (resctrl handles
- * mbw/llcocc) so at this commit llcmr reports zero. Arg parsing and
- * resctrl land in the next two commits.
+ * Arg parsing is still to come; the binary currently defaults to a
+ * system-wide run with 1 s sample interval and TSV output.
  */
 
 #include <bpf/bpf.h>
@@ -27,6 +25,9 @@
 #include "intp.skel.h"
 
 #include "../detect/detect.h"
+#include "../resctrl/resctrl.h"
+
+#define GROUP_NAME "intp-v6"
 
 static volatile sig_atomic_t g_running = 1;
 static void on_signal(int sig) { (void)sig; g_running = 0; }
@@ -141,11 +142,14 @@ static void compute_sample(const intp_state_t *st,
     out->llcmr = safe_pct((double)st->llc_misses, (double)st->llc_refs);
 }
 
-static void emit_tsv_header(FILE *out, const system_capabilities_t *caps)
+static void emit_tsv_header(FILE *out, const system_capabilities_t *caps,
+                            int resctrl_on)
 {
     fprintf(out,
         "# v6 ebpf-core -- netp:tracepoint nets:kprobe blk:tracepoint"
-        " cpu:sched_switch llcmr:off mbw:off llcocc:off\n");
+        " cpu:sched_switch llcmr:off mbw:%s llcocc:%s\n",
+        resctrl_on ? "resctrl" : "off",
+        resctrl_on ? "resctrl" : "off");
     fprintf(out, "# kernel %d.%d env=%s\n",
             caps->kernel_major, caps->kernel_minor,
             caps->env == ENV_CONTAINER ? "container" :
@@ -209,6 +213,11 @@ int main(void)
         return 1;
     }
 
+    /* Hybrid path: resctrl for mbw / llcocc when the kernel supports it. */
+    resctrl_group_t *rg = NULL;
+    if (caps.resctrl_usable)
+        rg = resctrl_create_group(GROUP_NAME);
+
     intp_state_t state;
     memset(&state, 0, sizeof(state));
     g_state = &state;
@@ -217,6 +226,7 @@ int main(void)
         ring_buffer__new(bpf_map__fd(skel->maps.events), handle_event, NULL, NULL);
     if (!rb) {
         fprintf(stderr, "failed to create ring_buffer: %s\n", strerror(errno));
+        resctrl_destroy_group(rg);
         intp_bpf__destroy(skel);
         return 1;
     }
@@ -225,7 +235,7 @@ int main(void)
     signal(SIGTERM, on_signal);
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    emit_tsv_header(stdout, &caps);
+    emit_tsv_header(stdout, &caps, rg != NULL);
 
     struct timespec tick;
     clock_gettime(CLOCK_MONOTONIC, &tick);
@@ -242,12 +252,17 @@ int main(void)
 
         intp_sample_t sample;
         compute_sample(&state, &caps, elapsed, &sample);
+        if (rg) {
+            sample.mbw    = resctrl_read_mbm_delta(rg, &caps, elapsed);
+            sample.llcocc = resctrl_read_llcocc(rg, &caps);
+        }
         emit_tsv(stdout, &sample);
         memset(&state, 0, sizeof(state));
         tick = now;
     }
 
     ring_buffer__free(rb);
+    resctrl_destroy_group(rg);
     intp_bpf__destroy(skel);
     return 0;
 }
