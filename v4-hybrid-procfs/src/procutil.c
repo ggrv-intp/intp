@@ -191,12 +191,12 @@ int procutil_read_stat_total(unsigned long *total_jiffies,
         &u, &ni, &sy, &id, &io, &ir, &sf, &st, &gu, &gn);
     if (matched < 4) return -1;
     if (matched < 10) {
-        if (matched < 5)  io = 0;
-        if (matched < 6)  ir = 0;
-        if (matched < 7)  sf = 0;
-        if (matched < 8)  st = 0;
-        if (matched < 9)  gu = 0;
-        if (matched < 10) gn = 0;
+        if (matched < 5) io = 0;
+        if (matched < 6) ir = 0;
+        if (matched < 7) sf = 0;
+        if (matched < 8) st = 0;
+        if (matched < 9) gu = 0;
+        gn = 0;
     }
     unsigned long total = u + ni + sy + id + io + ir + sf + st + gu + gn;
     *total_jiffies = total;
