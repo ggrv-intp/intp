@@ -365,6 +365,14 @@ int main(int argc, char **argv)
     system_capabilities_t caps;
     detect_all(&caps);
 
+    /* Apply hardware overrides from CLI (0 = keep autodetected value). */
+    if (args.nic_speed_bps_override > 0)
+        caps.nic_speed_bps = args.nic_speed_bps_override;
+    if (args.mem_bw_max_bps_override > 0)
+        caps.mem_bw_max_bps = args.mem_bw_max_bps_override;
+    if (args.llc_size_bytes_override > 0)
+        caps.llc_size_bytes = args.llc_size_bytes_override;
+
     if (args.list_capabilities) {
         print_capabilities(&caps, stdout);
         return 0;

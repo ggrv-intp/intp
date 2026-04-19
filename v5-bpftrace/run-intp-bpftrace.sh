@@ -23,6 +23,9 @@ OUTPUT="-"
 LIST_CAPS=0
 HEADER=0
 MON_GROUP="intp-v5"
+NIC_SPEED_BPS=""
+MEM_BW_MAX_BPS=""
+LLC_SIZE_BYTES=""
 
 WORKDIR=""
 AGGREGATOR_PID=""
@@ -40,6 +43,12 @@ Options:
   --header                Emit a header line describing the backends.
   --mon-group NAME        Resctrl mon_group name (default: intp-v5).
   --list-capabilities     Print detected capabilities and exit.
+
+Hardware overrides:
+  --nic-speed-bps N       NIC speed in bytes/sec (default: autodetect).
+  --mem-bw-max-bps N      Max memory bandwidth in bytes/sec (default: autodetect).
+  --llc-size-bytes N      Total LLC size in bytes (default: autodetect).
+
   -h, --help              Show this help and exit.
 EOF
 }
@@ -53,6 +62,9 @@ parse_args() {
             --output) OUTPUT="$2"; shift 2 ;;
             --header) HEADER=1; shift ;;
             --mon-group) MON_GROUP="$2"; shift 2 ;;
+            --nic-speed-bps) NIC_SPEED_BPS="$2"; shift 2 ;;
+            --mem-bw-max-bps) MEM_BW_MAX_BPS="$2"; shift 2 ;;
+            --llc-size-bytes) LLC_SIZE_BYTES="$2"; shift 2 ;;
             --list-capabilities) LIST_CAPS=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
@@ -173,6 +185,15 @@ main() {
     fi
     if (( HEADER )); then
         agg_args+=(--header)
+    fi
+    if [[ -n "$NIC_SPEED_BPS" ]]; then
+        agg_args+=(--nic-speed-bps "$NIC_SPEED_BPS")
+    fi
+    if [[ -n "$MEM_BW_MAX_BPS" ]]; then
+        agg_args+=(--mem-bw-max-bps "$MEM_BW_MAX_BPS")
+    fi
+    if [[ -n "$LLC_SIZE_BYTES" ]]; then
+        agg_args+=(--llc-size-bytes "$LLC_SIZE_BYTES")
     fi
 
     "$PYTHON_BIN" "${agg_args[@]}" &

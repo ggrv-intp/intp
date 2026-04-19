@@ -103,8 +103,8 @@ def compute_netp(payload: dict | None, nic_speed_bps: int, interval: float) -> i
         return 0
     tx = payload.get("tx_bytes", 0)
     rx = payload.get("rx_bytes", 0)
-    bps = (tx + rx) * 8 / interval
-    return _clamp(bps / nic_speed_bps * 100)
+    bytes_per_sec = (tx + rx) / interval
+    return _clamp(bytes_per_sec / nic_speed_bps * 100)
 
 
 def compute_nets(payload: dict | None, interval: float, cpus: int) -> int:
@@ -183,12 +183,18 @@ def main() -> int:
                         help="resctrl monitoring group name")
     parser.add_argument("--header", action="store_true",
                         help="emit a header line describing each backend")
+    parser.add_argument("--nic-speed-bps", type=int, default=0,
+                        help="override detected NIC speed (bytes/sec)")
+    parser.add_argument("--mem-bw-max-bps", type=int, default=0,
+                        help="override detected memory bandwidth ceiling (bytes/sec)")
+    parser.add_argument("--llc-size-bytes", type=int, default=0,
+                        help="override detected LLC size (bytes)")
     args = parser.parse_args()
 
     caps = detect.detect()
-    nic_speed = detect.nic_speed_bps(caps)
-    llc_bytes = detect.llc_size_bytes(caps)
-    mem_bw = detect.mem_bw_bps(caps)
+    nic_speed = args.nic_speed_bps if args.nic_speed_bps > 0 else detect.nic_speed_bps(caps)
+    llc_bytes = args.llc_size_bytes if args.llc_size_bytes > 0 else detect.llc_size_bytes(caps)
+    mem_bw = args.mem_bw_max_bps if args.mem_bw_max_bps > 0 else detect.mem_bw_bps(caps)
     cpus = detect.cpu_count(caps)
 
     state = MetricState()
@@ -256,7 +262,10 @@ def main() -> int:
                 "llcmr": compute_llcmr(state.snapshot("llcmr")),
                 "cpu":  compute_cpu(state.snapshot("cpu"), args.interval, cpus),
                 "mbw":  compute_mbw(state.snapshot("mbw"), mem_bw) if reader.available else 0,
-                "llcocc": compute_llcocc(state.snapshot("llcocc"), llc_bytes) if reader.available else 0,
+                "llcocc": (
+                    compute_llcocc(state.snapshot("llcocc"), llc_bytes)
+                    if reader.available else 0
+                ),
             }
             emit_tsv_row(values, out)
 

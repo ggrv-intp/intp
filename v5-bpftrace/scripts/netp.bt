@@ -8,8 +8,8 @@
  * Output format (JSON, one line per interval):
  *   {"metric":"netp","ts":<ns>,"tx_bytes":<N>,"rx_bytes":<N>}
  *
- * The orchestrator normalises against the detected NIC speed:
- *   util = (tx + rx) / interval_sec / nic_speed_bps * 100
+ * The orchestrator normalises against the detected NIC speed (bytes/sec):
+ *   util = (tx_bytes + rx_bytes) / interval_sec / nic_speed_bps * 100
  */
 
 BEGIN

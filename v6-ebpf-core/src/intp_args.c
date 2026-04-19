@@ -46,6 +46,11 @@ void intp_args_usage(const char *prog, FILE *out)
         "  --no-resctrl            disable resctrl (skip mbw, llcocc)\n"
         "  --list-capabilities     print detected capabilities and exit\n"
         "\n"
+        "Hardware overrides:\n"
+        "  --nic-speed-bps N       NIC speed in bytes/sec (default: autodetect)\n"
+        "  --mem-bw-max-bps N      max memory bandwidth in bytes/sec (default: autodetect)\n"
+        "  --llc-size-bytes N      total LLC size in bytes (default: autodetect)\n"
+        "\n"
         "Verbosity:\n"
         "  --verbose               enable libbpf verifier log\n"
         "  --trace                 print each event as it arrives\n"
@@ -68,7 +73,7 @@ int intp_args_parse(int argc, char **argv, intp_args_t *out)
     enum {
         O_PIDS = 1000, O_CGROUP, O_INTERVAL, O_DURATION, O_OUTPUT,
         O_NO_HEADER, O_RINGBUF, O_NO_PERF, O_NO_RES, O_LIST_CAPS,
-        O_VERBOSE, O_TRACE
+        O_VERBOSE, O_TRACE, O_NIC_SPEED, O_MEM_BW, O_LLC_SIZE
     };
 
     static struct option long_opts[] = {
@@ -84,6 +89,9 @@ int intp_args_parse(int argc, char **argv, intp_args_t *out)
         { "list-capabilities", no_argument,       NULL, O_LIST_CAPS },
         { "verbose",           no_argument,       NULL, O_VERBOSE },
         { "trace",             no_argument,       NULL, O_TRACE },
+        { "nic-speed-bps",     required_argument, NULL, O_NIC_SPEED },
+        { "mem-bw-max-bps",    required_argument, NULL, O_MEM_BW },
+        { "llc-size-bytes",    required_argument, NULL, O_LLC_SIZE },
         { "help",              no_argument,       NULL, 'h' },
         { 0, 0, 0, 0 }
     };
@@ -131,6 +139,9 @@ int intp_args_parse(int argc, char **argv, intp_args_t *out)
         case O_LIST_CAPS:  out->list_capabilities = 1; break;
         case O_VERBOSE:    out->verbose           = 1; break;
         case O_TRACE:      out->trace             = 1; break;
+        case O_NIC_SPEED:  out->nic_speed_bps_override  = atol(optarg); break;
+        case O_MEM_BW:     out->mem_bw_max_bps_override = atol(optarg); break;
+        case O_LLC_SIZE:   out->llc_size_bytes_override = atol(optarg); break;
         case 'h':
             intp_args_usage(argv[0], stdout);
             return 1;
