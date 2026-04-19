@@ -198,6 +198,19 @@ build aborts; there is no kernel-header fallback path. If resctrl is
 unavailable, `--no-resctrl` disables mbw and llcocc. If perf_event is
 restricted (paranoid level > 1), `--no-perf-events` disables llcmr.
 
+### 10.1 NAPI RX latency on the kretprobe path
+
+V6 records NAPI RX start timestamps on `kprobe/napi_poll` entry but
+does NOT emit a matching latency sample on `kretprobe/napi_poll`
+exit. The reason: `PT_REGS_PARM1` is not available to kretprobes,
+so the `napi_struct` pointer used as the entry-side map key cannot
+be recovered on exit to close the sample. Consequence: the
+`INTP_EVENT_NAPI_RX_LAT` event stream is produced only intermittently
+(whenever a tracepoint-based correlation path exists), and the RX
+fraction of the `nets` metric will be systematically lower than
+V1/V3. The TX path is unaffected because `net:net_dev_start_xmit`
+carries `skbaddr`, enabling end-to-end correlation.
+
 ## 11. Execution environments
 
 - **Bare-metal**: full functionality.
