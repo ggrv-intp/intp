@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import signal
 import sys
 import threading
@@ -221,7 +220,7 @@ def main() -> int:
         t.start()
         threads.append(t)
 
-    out = sys.stdout if args.output == "-" else open(args.output, "w", buffering=1)
+    out = sys.stdout if args.output == "-" else open(args.output, "w", buffering=1)  # noqa: SIM115
     try:
         if args.header:
             backends = (
