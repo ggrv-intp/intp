@@ -36,7 +36,7 @@ BPFTOOL     ?= $(shell \
     ls -1 /usr/lib/linux-tools/*/bpftool 2>/dev/null | sort -V | tail -1; \
   fi)
 
-CFLAGS      ?= -g -O2 -Wall -Wextra -std=gnu11 -D_GNU_SOURCE
+CFLAGS      ?= -g -O2 -Wall -Wextra -Wpedantic -Werror -Wno-overlength-strings -std=c11 -D_GNU_SOURCE
 BPF_CFLAGS  ?= -g -O2 -Wall
 LDFLAGS     ?=
 LDLIBS      ?= -lbpf -lelf -lz -lpthread
@@ -71,7 +71,7 @@ else
 endif
 BPF_CFLAGS += -target bpf -D__TARGET_ARCH_$(BPF_ARCH) $(INCLUDES)
 
-.PHONY: all clean deps vmlinux skeleton test
+.PHONY: all clean deps vmlinux skeleton test test-full
 
 all: deps $(BINARY)
 
@@ -126,6 +126,11 @@ $(BINARY): $(USER_OBJS)
 
 test: $(BINARY)
 	@bash tests/integration/test-load-attach.sh
+
+test-full: $(BINARY)
+	@bash tests/integration/test-load-attach.sh
+	@bash tests/integration/test-metrics-accuracy.sh
+	@bash tests/integration/test-overhead.sh
 
 clean:
 	rm -f $(BPF_OBJ) $(BPF_SKEL) $(VMLINUX_H)
