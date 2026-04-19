@@ -3,7 +3,7 @@
 
 CC      ?= gcc
 CSTD    ?= -std=c99
-WARN     = -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-prototypes
+WARN     = -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Werror
 OPT     ?= -O2
 CFLAGS  ?= $(CSTD) $(WARN) $(OPT) -D_GNU_SOURCE -Iinclude -Isrc
 LDFLAGS ?=
