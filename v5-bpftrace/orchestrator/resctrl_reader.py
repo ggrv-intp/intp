@@ -8,6 +8,7 @@ absent hardware metrics as zero.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 import time
@@ -107,8 +108,6 @@ class ResctrlReader:
 
     def cleanup(self) -> None:
         if self._created and self.base_path.is_dir():
-            try:
+            with contextlib.suppress(OSError):
                 os.rmdir(self.base_path)
-            except OSError:
-                pass
             self._created = False
