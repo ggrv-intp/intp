@@ -28,6 +28,10 @@ typedef struct {
 
     int    verbose;
     int    trace;
+
+    long   nic_speed_bps_override;   /* 0 = autodetect */
+    long   mem_bw_max_bps_override;  /* 0 = autodetect */
+    long   llc_size_bytes_override;  /* 0 = autodetect */
 } intp_args_t;
 
 /* Parse argv into args. Returns 0 on success, -1 on usage error, 1 if
