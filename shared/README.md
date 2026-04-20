@@ -11,6 +11,7 @@ support, CPU vendor, socket count, and memory bandwidth. Outputs shell variables
 that can be eval'd by other scripts.
 
 Usage:
+
 ```bash
 eval $(./intp-detect.sh)
 echo "NIC speed: ${INTP_NIC_SPEED_MBPS} Mbps"
@@ -24,6 +25,7 @@ and V6 for LLC occupancy and memory bandwidth monitoring via the resctrl
 filesystem.
 
 Usage:
+
 ```bash
 sudo ./intp-resctrl-helper.sh start <PID>   # Create monitoring group
 sudo ./intp-resctrl-helper.sh stop           # Clean up
