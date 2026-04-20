@@ -132,7 +132,7 @@ grep AuthenticAMD /proc/cpuinfo
 
 ### 3.3 IntP Backend Priority (V4)
 
-```
+```texts
 mbw:    resctrl_mbm > perf_amd_df (DRAM beats, 64B granularity)
 llcocc: resctrl > proxy_from_miss_ratio
 llcmr:  perf_hwcache > perf_raw (L3_LOOKUP=0x04 / L3_MISS=0x06)
@@ -201,7 +201,7 @@ ls /sys/devices/arm_cmn*/
 
 ### 4.3 IntP Backend Priority (V4)
 
-```
+```text
 mbw:    resctrl_mbm > perf_arm_cmn (HN-F memory traffic, 64B)
 llcocc: resctrl > proxy_from_miss_ratio
 llcmr:  perf_hwcache > perf_raw (LL_CACHE=0x32 / LL_CACHE_MISS_RD=0x37)

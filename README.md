@@ -8,6 +8,49 @@ Prof. Cesar De Rose). The research compares the original SystemTap-based IntP
 against modern instrumentation approaches (procfs polling, bpftrace, eBPF/CO-RE)
 to evaluate portability, safety, and measurement fidelity tradeoffs.
 
+## About
+
+**Author:** André Sacilotto Santos (PPGCC/PUCRS)
+**Advisor:** Prof. Cesar De Rose
+**Program:** Graduate Program in Computer Science -- PPGCC, PUCRS
+**Research Area:** Cloud computing performance, kernel instrumentation, interference profiling
+
+### Background
+
+IntP (Interference Profiler) was originally developed by De Rose et al. (2022) as a
+SystemTap-based tool for measuring resource interference between co-located workloads
+in cloud environments. It collects seven low-level metrics (network, block I/O, memory
+bandwidth, LLC miss ratio, LLC occupancy, CPU) to characterize how one tenant's resource
+usage affects another's performance.
+
+This work extends and refactors IntP to support modern Linux kernels (6.8+) and
+modern instrumentation frameworks (bpftrace, eBPF/CO-RE), addressing the fragility of
+the original SystemTap approach across kernel versions and hardware architectures.
+
+### Research Goals
+
+1. Reproduce the original IntP baseline (V1) and document breakage on kernel 6.8+.
+2. Develop minimal patches to restore functionality on current kernels (V2, V3).
+3. Implement kernel-module-free alternatives using procfs/perf_event (V4), bpftrace (V5), and eBPF/CO-RE (V6).
+4. Compare all six variants across portability, safety, deployment complexity, and measurement fidelity dimensions.
+
+### Status
+
+| Variant | Status |
+| --------- | -------- |
+| V1 -- Original (SystemTap, <=6.6) | Complete (baseline) |
+| V2 -- Updated (SystemTap, 6.8+, LLC disabled) | Complete |
+| V3 -- Resctrl (SystemTap, 6.8+, full metrics) | Complete |
+| V4 -- Hybrid procfs | Scaffold / in progress |
+| V5 -- bpftrace | Scaffold / in progress |
+| V6 -- eBPF/CO-RE | Scaffold / in progress |
+
+### Citation
+
+If you use this software in your research, please cite it using the metadata in
+[CITATION.cff](CITATION.cff). A full thesis citation will be added upon defense
+(expected March 2027).
+
 ## Variant Comparison
 
 | Feature                  | V1 original | V2 updated | V3 resctrl | V4 hybrid | V5 bpftrace | V6 ebpf-core |
