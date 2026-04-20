@@ -26,6 +26,9 @@
 #   --v4-bin PATH         Path to V4 binary (default: ../v4-hybrid-procfs/intp-hybrid)
 #   --v5-script PATH      Path to V5 launcher (default: ../v5-bpftrace/run-intp-bpftrace.sh)
 #   --v6-bin PATH         Path to V6 binary (default: ../v6-ebpf-core/intp-ebpf)
+#   --nic-speed-bps N    Force NIC speed (bytes/sec) for all variants
+#   --mem-bw-max-bps N   Force memory bandwidth ceiling (bytes/sec) for all variants
+#   --llc-size-bytes N   Force LLC size (bytes) for all variants
 #   --dry-run             Show what would be run without executing
 #   -h, --help            Show this help
 # -----------------------------------------------------------------------------
@@ -44,6 +47,9 @@ TOLERANCE=15
 OUTPUT_DIR=""
 DRY_RUN=0
 WORKLOAD_PID=""
+NIC_SPEED_BPS=""
+MEM_BW_MAX_BPS=""
+LLC_SIZE_BYTES=""
 
 V4_BIN="${REPO_ROOT}/v4-hybrid-procfs/intp-hybrid"
 V5_SCRIPT="${REPO_ROOT}/v5-bpftrace/run-intp-bpftrace.sh"
@@ -69,6 +75,9 @@ parse_args() {
             --v4-bin)         V4_BIN="$2"; shift 2 ;;
             --v5-script)      V5_SCRIPT="$2"; shift 2 ;;
             --v6-bin)         V6_BIN="$2"; shift 2 ;;
+            --nic-speed-bps)  NIC_SPEED_BPS="$2"; shift 2 ;;
+            --mem-bw-max-bps) MEM_BW_MAX_BPS="$2"; shift 2 ;;
+            --llc-size-bytes) LLC_SIZE_BYTES="$2"; shift 2 ;;
             --dry-run)        DRY_RUN=1; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                echo "Unknown option: $1" >&2; usage; exit 2 ;;
@@ -123,10 +132,18 @@ run_variant() {
         [[ "$name" == "v4" ]] && pid_args=(--pids "$TARGET_PID")
     fi
 
+    # Hardware overrides ensure all variants normalise against the same
+    # constants, eliminating detect-path divergence as a noise source.
+    local hw_args=()
+    [[ -n "$NIC_SPEED_BPS" ]]  && hw_args+=(--nic-speed-bps "$NIC_SPEED_BPS")
+    [[ -n "$MEM_BW_MAX_BPS" ]] && hw_args+=(--mem-bw-max-bps "$MEM_BW_MAX_BPS")
+    [[ -n "$LLC_SIZE_BYTES" ]] && hw_args+=(--llc-size-bytes "$LLC_SIZE_BYTES")
+
     case "$name" in
         v4)
             timeout "$((DURATION + 5))" "$V4_BIN" \
                 "${pid_args[@]}" \
+                "${hw_args[@]}" \
                 --interval "$INTERVAL" \
                 --duration "$DURATION" \
                 --output tsv \
@@ -136,6 +153,7 @@ run_variant() {
         v5)
             timeout "$((DURATION + 5))" "$V5_SCRIPT" \
                 "${pid_args[@]}" \
+                "${hw_args[@]}" \
                 --interval "$INTERVAL" \
                 --duration "$DURATION" \
                 > "$outfile" 2>"${outfile}.err" || true
@@ -143,6 +161,7 @@ run_variant() {
         v6)
             timeout "$((DURATION + 5))" "$V6_BIN" \
                 "${pid_args[@]}" \
+                "${hw_args[@]}" \
                 --interval "$INTERVAL" \
                 --duration "$DURATION" \
                 --output tsv \
@@ -334,6 +353,9 @@ main() {
         echo "| Duration | ${DURATION}s |"
         echo "| Tolerance | ${TOLERANCE}% |"
         echo "| Variants | ${available[*]} |"
+        [[ -n "$NIC_SPEED_BPS" ]]  && echo "| NIC speed override | ${NIC_SPEED_BPS} B/s |"
+        [[ -n "$MEM_BW_MAX_BPS" ]] && echo "| Mem BW override | ${MEM_BW_MAX_BPS} B/s |"
+        [[ -n "$LLC_SIZE_BYTES" ]] && echo "| LLC size override | ${LLC_SIZE_BYTES} B |"
         echo ""
         echo "## Per-Variant Output"
         echo ""

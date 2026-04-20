@@ -45,9 +45,13 @@ def detect(detect_sh: Path | str | None = None) -> dict[str, str]:
 
 
 def nic_speed_bps(caps: dict[str, str]) -> int:
-    """Return the detected NIC speed in bits/sec (defaults to 1 Gbps)."""
+    """Return the detected NIC speed in bytes/sec (defaults to 1 Gbps = 125 MB/s).
+
+    Uses bytes/sec to match V4/V6 convention: sysfs reports Mbps (megabits),
+    we convert via ``Mbps * 1_000_000 / 8``.
+    """
     mbps = int(caps.get("INTP_NIC_SPEED_MBPS", "1000") or "1000")
-    return mbps * 1_000_000
+    return mbps * 1_000_000 // 8
 
 
 def llc_size_bytes(caps: dict[str, str]) -> int:
@@ -56,6 +60,11 @@ def llc_size_bytes(caps: dict[str, str]) -> int:
 
 
 def mem_bw_bps(caps: dict[str, str]) -> int:
+    """Return max memory bandwidth in bytes/sec.
+
+    INTP_MEM_BW_MBPS from intp-detect.sh is in MB/s (megabytes), so
+    ``* 1_000_000`` yields bytes/sec directly.
+    """
     mbps = int(caps.get("INTP_MEM_BW_MBPS", "0") or "0")
     return mbps * 1_000_000
 

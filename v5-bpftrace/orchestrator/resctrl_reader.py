@@ -95,7 +95,7 @@ class ResctrlReader:
                 delta = total - self._last_mbm_total
                 if delta < 0:
                     delta = 0
-                mbw_bps = int(delta * 8 / dt)
+                mbw_bps = int(delta / dt)
         self._last_mbm_total = total
         self._last_mbm_ts = now
         with self._state_lock:

@@ -161,7 +161,7 @@ capture_v3() {
     local STAP_PID=$!
 
     # Wait for /proc/intestbench to exist (stap module load time)
-    for i in $(seq 1 30); do
+    for _wait in $(seq 1 30); do
         [ -e /proc/intestbench ] && break
         sleep 1
     done

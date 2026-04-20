@@ -103,8 +103,8 @@ def compute_netp(payload: dict | None, nic_speed_bps: int, interval: float) -> i
         return 0
     tx = payload.get("tx_bytes", 0)
     rx = payload.get("rx_bytes", 0)
-    bps = (tx + rx) * 8 / interval
-    return _clamp(bps / nic_speed_bps * 100)
+    bytes_per_sec = (tx + rx) / interval
+    return _clamp(bytes_per_sec / nic_speed_bps * 100)
 
 
 def compute_nets(payload: dict | None, interval: float, cpus: int) -> int:
@@ -262,7 +262,10 @@ def main() -> int:
                 "llcmr": compute_llcmr(state.snapshot("llcmr")),
                 "cpu":  compute_cpu(state.snapshot("cpu"), args.interval, cpus),
                 "mbw":  compute_mbw(state.snapshot("mbw"), mem_bw) if reader.available else 0,
-                "llcocc": compute_llcocc(state.snapshot("llcocc"), llc_bytes) if reader.available else 0,
+                "llcocc": (
+                    compute_llcocc(state.snapshot("llcocc"), llc_bytes)
+                    if reader.available else 0
+                ),
             }
             emit_tsv_row(values, out)
 
