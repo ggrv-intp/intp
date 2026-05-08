@@ -160,19 +160,19 @@ meson configure build               # show current values
 meson configure build -Dwith_ebpf=disabled
 ```
 
-| Option                       | Default | What it does                                             |
-|------------------------------|---------|----------------------------------------------------------|
-| `with_ebpf`                  | `auto`  | `enabled` / `disabled` / `auto` — eBPF backends.         |
-| `with_bpftrace`              | `false` | Build the bpftrace research plugin.                      |
-| `with_gpu_nvml`              | `false` | NVIDIA GPU plugin (requires NVML SDK).                   |
-| `with_gpu_rocm`              | `false` | AMD GPU plugin (requires ROCm).                          |
-| `with_gpu_zes`               | `false` | Intel GPU plugin (requires Level Zero).                  |
-| `with_otel`                  | `false` | OpenTelemetry OTLP output sink.                          |
-| `with_prometheus`            | `true`  | Prometheus exposition output sink.                       |
-| `with_tests`                 | `true`  | Build the test suite.                                    |
-| `with_examples`              | `false` | Build `examples/` programs.                              |
-| `with_static`                | `false` | Static link `libintp` into the `intp` binary.            |
-| `prefix`                     | `/usr/local` | Install prefix.                                     |
+| Option            | Default      | What it does                                       |
+|-------------------|--------------|----------------------------------------------------|
+| `with_ebpf`       | `auto`       | `enabled` / `disabled` / `auto` — eBPF backends.   |
+| `with_bpftrace`   | `false`      | Build the bpftrace research plugin.                |
+| `with_gpu_nvml`   | `false`      | NVIDIA GPU plugin (requires NVML SDK).             |
+| `with_gpu_rocm`   | `false`      | AMD GPU plugin (requires ROCm).                    |
+| `with_gpu_zes`    | `false`      | Intel GPU plugin (requires Level Zero).            |
+| `with_otel`       | `false`      | OpenTelemetry OTLP output sink.                    |
+| `with_prometheus` | `true`       | Prometheus exposition output sink.                 |
+| `with_tests`      | `true`       | Build the test suite.                              |
+| `with_examples`   | `false`      | Build `examples/` programs.                        |
+| `with_static`     | `false`      | Static link `libintp` into the `intp` binary.      |
+| `prefix`          | `/usr/local` | Install prefix.                                    |
 
 A typical CI invocation: `meson setup build -Dwith_ebpf=enabled
 -Dwith_tests=true -Dwerror=true`.
@@ -219,7 +219,7 @@ sudo meson install -C build
 
 Default layout under `--prefix=/usr/local`:
 
-```
+```text
 /usr/local/bin/intp
 /usr/local/lib/libintp.so.0
 /usr/local/lib/libintp.so.0.<minor>
@@ -239,9 +239,52 @@ For distro packagers, the Debian rules file uses `--prefix=/usr` with
 
 ## Common build problems
 
-**"meson found libbpf 0.5, requires ≥ 0.8"** — your distro's libbpf
-is too old. Either rebuild against backports, vendor a newer libbpf
-under `subprojects/`, or build with `--without-ebpf`.
+**"libbpf X.Y found, need ≥ 0.8"** — your distro's `libbpf-dev` is too
+old. This is the common case on Ubuntu 22.04 (libbpf 0.5), Debian 11,
+and RHEL 8. With the default `-Dwith_ebpf=auto`, meson disables eBPF
+quietly and prints an `intp: --` message at configure time; the
+build still succeeds via the pure-C path. With `-Dwith_ebpf=enabled`,
+meson fails loudly. Three ways forward, in order of recommendation:
+
+1. **Build with `-Dwith_ebpf=disabled`** (production on older LTS).
+   The pure-C backend covers all seven metrics with slightly lower
+   fidelity on `blk` and `nets` — see
+   [ADR-0003](design/0003-ebpf-acceleration.md) for the trade-off.
+   This is what `intp` running in `apt install`-shipped form will
+   look like on jammy.
+
+2. **Use a newer libbpf via `PKG_CONFIG_PATH`** (development on
+   older LTS, or research that needs the eBPF backend on jammy):
+
+   ```bash
+   # Build libbpf into a per-user prefix (no sudo required).
+   git clone --branch v1.5.0 https://github.com/libbpf/libbpf.git ~/src/libbpf
+   cd ~/src/libbpf/src
+   DESTDIR=$HOME/.local/libbpf-1.5 PREFIX= LIBDIR=/lib make install
+
+   # Point intp's meson at it.
+   cd /path/to/intp
+   PKG_CONFIG_PATH=$HOME/.local/libbpf-1.5/lib/pkgconfig \
+   LD_LIBRARY_PATH=$HOME/.local/libbpf-1.5/lib \
+       meson setup build -Dwith_ebpf=enabled
+   meson compile -C build
+   ```
+
+   At runtime, the linker needs to find your custom `libbpf.so.1` —
+   either via `LD_LIBRARY_PATH` as above, or by passing
+   `-Dc_link_args=-Wl,-rpath,$HOME/.local/libbpf-1.5/lib` to
+   `meson setup` so the rpath bakes into the binary.
+
+3. **Install a distro backport** if one exists. Debian
+   `bullseye-backports` and Ubuntu PPAs occasionally ship newer
+   `libbpf-dev`; check `apt-cache policy libbpf-dev` and the
+   relevant backports lists.
+
+We deliberately do *not* vendor libbpf as a meson subproject:
+Debian Policy §4.13 discourages embedded copies of system libraries,
+and bundling would force every distro packager to disable the
+fallback. The `PKG_CONFIG_PATH` override above gives the same
+end-user benefit without that downside.
 
 **"BTF not available on this host"** — the build host's running
 kernel does not expose `/sys/kernel/btf/vmlinux`. The build can still

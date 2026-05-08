@@ -58,22 +58,45 @@ opt_static     = get_option('with_static')
 # Optional dependencies
 # ---------------------------------------------------------------------------
 
-# libbpf is required only when eBPF is enabled. `auto` resolves here:
-# present at configure time → enabled, absent → disabled.
-libbpf_dep = dependency('libbpf', version: '>= 0.8',
-                        required: opt_ebpf == 'enabled')
-have_libbpf = libbpf_dep.found()
+# libbpf is required only when eBPF is enabled. We probe without a
+# version constraint and check it manually so we can produce a clear
+# error / message when the version is too old (Ubuntu 22.04 ships
+# libbpf 0.5; we need >= 0.8 per ADR-0003). See docs/BUILDING.md for
+# the PKG_CONFIG_PATH override path.
+libbpf_dep = dependency('libbpf', required: false)
+libbpf_min = '>= 0.8'
+libbpf_ok = libbpf_dep.found() and libbpf_dep.version().version_compare(libbpf_min)
+
+if opt_ebpf == 'enabled' and not libbpf_ok
+        if libbpf_dep.found()
+                error('with_ebpf=enabled but libbpf @0@ found, need @1@'.format(
+                        libbpf_dep.version(), libbpf_min))
+        else
+                error('with_ebpf=enabled but libbpf not found')
+        endif
+endif
 
 if opt_ebpf == 'auto'
-        ebpf_enabled = have_libbpf
+        ebpf_enabled = libbpf_ok
 elif opt_ebpf == 'enabled'
         ebpf_enabled = true
 else
         ebpf_enabled = false
 endif
 
-if ebpf_enabled and not have_libbpf
-        error('--with-ebpf=enabled was requested but libbpf was not found')
+# When auto resolves to disabled, explain why instead of being silent —
+# users on older LTS releases otherwise wonder why eBPF isn't on.
+if opt_ebpf == 'auto' and not ebpf_enabled
+        if libbpf_dep.found()
+                message('intp: found libbpf @0@ but @1@ required.'.format(
+                        libbpf_dep.version(), libbpf_min))
+                message('intp: eBPF backends disabled; pure-C path will be used at runtime.')
+                message('intp: -- to enable, install a newer libbpf or set PKG_CONFIG_PATH (see docs/BUILDING.md).')
+                message('intp: -- to fail loud instead, configure with -Dwith_ebpf=enabled.')
+        else
+                message('intp: libbpf not found; eBPF backends disabled (pure-C path).')
+                message('intp: -- to enable, install libbpf-dev (@0@) (see docs/BUILDING.md).'.format(libbpf_min))
+        endif
 endif
 
 # Prometheus exposition needs an HTTP server. libmicrohttpd is the default.

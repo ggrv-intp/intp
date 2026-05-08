@@ -37,13 +37,15 @@ jobs:
             compiler: gcc
             ebpf: disabled
           # Ubuntu 22.04 (jammy) ships libbpf 0.5.0; our minimum is
-          # 0.8 (per ADR-0003). LTS users on 22.04 build with
-          # --without-ebpf and get the pure-C path, which is exactly
-          # what this matrix cell exercises.
+          # 0.8 (per ADR-0003). With -Dwith_ebpf=auto, meson resolves
+          # to disabled and prints an explanatory message; this cell
+          # verifies that path end-to-end. The matching loud-fail
+          # path (-Dwith_ebpf=enabled) is exercised by the separate
+          # build-ubuntu-jammy-fail-loud job below.
           - ubuntu: '22.04'
             runner: ubuntu-22.04
             compiler: gcc
-            ebpf: disabled
+            ebpf: auto
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +69,14 @@ jobs:
               -Dwith_ebpf=${{ matrix.ebpf }} \
               -Dwith_tests=true \
               -Dwith_examples=true \
-              -Dwerror=true
+              -Dwerror=true 2>&1 | tee meson-setup.log
+
+      - name: Verify smart-fallback message (jammy + auto only)
+        if: matrix.ubuntu == '22.04' && matrix.ebpf == 'auto'
+        run: |
+          grep -q 'eBPF backends disabled' meson-setup.log
+          grep -q 'PKG_CONFIG_PATH' meson-setup.log
+          echo "OK: configure announced the auto-downgrade as expected."
 
       - name: Compile
         run: meson compile -C build -v
@@ -92,6 +101,44 @@ jobs:
         with:
           name: meson-logs-${{ matrix.ubuntu }}-${{ matrix.compiler }}-ebpf-${{ matrix.ebpf }}
           path: build/meson-logs/
+
+  # -------------------------------------------------------------------
+  # Negative test — on a host with too-old libbpf, -Dwith_ebpf=enabled
+  # MUST fail at configure time with a recognisable message. This
+  # locks in the loud-fail half of ADR-0003's smart-fallback policy
+  # so a future refactor can't silently turn the loud path into the
+  # silent path.
+  # -------------------------------------------------------------------
+  build-ubuntu-jammy-fail-loud:
+    name: Ubuntu 22.04 • eBPF=enabled (must fail loud)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              meson ninja-build pkg-config gcc \
+              libbpf-dev libelf-dev zlib1g-dev \
+              libmicrohttpd-dev python3
+
+      - name: Configure with -Dwith_ebpf=enabled (expect failure)
+        run: |
+          set +e
+          meson setup build -Dwith_ebpf=enabled 2>&1 | tee meson-setup.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" = "0" ]; then
+            echo "::error::meson should have refused -Dwith_ebpf=enabled on jammy (libbpf 0.5)."
+            exit 1
+          fi
+          # Make sure we failed for the right reason, not some unrelated breakage.
+          grep -qi 'libbpf' meson-setup.log || {
+            echo "::error::meson failed but the log does not mention libbpf — check meson-setup.log."
+            exit 1
+          }
+          echo "OK: meson refused to build with -Dwith_ebpf=enabled, as required by ADR-0003."
 
   # -------------------------------------------------------------------
   # Container builds — exercise the distro packaging assumptions early.
