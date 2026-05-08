@@ -45,7 +45,7 @@ version: "0.1.0-dev"
 #     name: "PUCRS"
 #   year: 2027
 references:
-  - type: article
+  - type: conference-paper
     title: "IntP: Quantifying Cross-Application Interference via System-Level Instrumentation"
     authors:
       - family-names: "Xavier"
@@ -53,7 +53,14 @@ references:
       - family-names: "De Rose"
         given-names: "Cesar A. F."
     conference:
-      name: "SBAC-PAD 2022"
+      name: "34th IEEE International Symposium on Computer Architecture and High Performance Computing (SBAC-PAD)"
+      city: "Bordeaux"
+      country: "FR"
     year: 2022
+    month: 11
+    start: 221
+    end: 230
+    # doi: "10.1109/SBAC-PAD…"  # paste from the IEEE Xplore page
     publisher:
       name: "IEEE"
+    url: "https://ieeexplore.ieee.org/document/9980934/"
