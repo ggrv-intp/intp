@@ -1,0 +1,105 @@
+name: Bug report
+description: Something is broken or behaves incorrectly.
+title: "bug: <short summary>"
+labels: ["kind/bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. The more of the fields below you can
+        fill in, the faster we can reproduce. **For metric value
+        regressions specifically**, please use the *Metric fidelity
+        regression* template instead — it asks for the comparison
+        against `intp-comparison` reference output.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: A clear description of the bug.
+      placeholder: e.g. `intp -p 1234` exits with `EPERM` on a kernel where it used to work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproduction steps
+      description: A minimal command line is best. Include any required workload (e.g. `stress-ng` invocation).
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: intp version
+      description: Output of `intp --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel
+      description: Output of `uname -r`.
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      placeholder: e.g. Debian 13, Ubuntu 24.04, Fedora 41, Arch (rolling)
+    validations:
+      required: true
+
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      description: First stanza of `/proc/cpuinfo` is fine.
+      placeholder: e.g. Intel Sapphire Rapids, AMD EPYC 9654, Ampere Altra
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Active backend(s)
+      description: Run `intp --print-schema` and report which backend each metric resolved to.
+      multiple: true
+      options:
+        - procfs
+        - perf_event
+        - resctrl
+        - netlink
+        - ebpf
+        - bpftrace plugin
+        - other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      description: Run with `INTP_LOG=debug` if the failure isn't obvious.
+      render: shell
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and discussions for duplicates.
+          required: true
+        - label: This is not a security issue (those go to Security Advisories — see SECURITY.md).
+          required: true

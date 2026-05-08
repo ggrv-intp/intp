@@ -1,0 +1,103 @@
+# clang-format configuration for `intp`.
+#
+# Style is the Linux kernel C style: hard 8-column tabs, 80-column
+# lines, K&R braces. This intentionally matches what `intp-comparison`'s
+# v2-c-stable-abi expects, so contributors moving between the two
+# repositories don't have to retrain their fingers.
+#
+# Generated baseline: clang-format >= 14.
+
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# --- Indentation ----------------------------------------------------------
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always
+ContinuationIndentWidth: 8
+ConstructorInitializerIndentWidth: 8
+
+# --- Braces ---------------------------------------------------------------
+BreakBeforeBraces: Linux
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+
+# --- Line width -----------------------------------------------------------
+ColumnLimit: 80
+ReflowComments: true
+
+# --- Pointer / reference alignment ----------------------------------------
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+# --- Spaces ---------------------------------------------------------------
+SpaceBeforeParens: ControlStatementsExceptControlMacros
+SpacesInParens: Never
+SpacesInSquareBrackets: false
+SpacesInAngles: Never
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+
+# --- Includes -------------------------------------------------------------
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project public headers
+  - Regex: '^<intp/'
+    Priority: 1
+  # System headers
+  - Regex: '^<sys/'
+    Priority: 2
+  - Regex: '^<linux/'
+    Priority: 3
+  # Other angle-bracketed (libc, libbpf, etc.)
+  - Regex: '^<.*'
+    Priority: 4
+  # Local quoted headers
+  - Regex: '^".*'
+    Priority: 5
+
+# --- Declarations & alignment ---------------------------------------------
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: AcrossEmptyLines
+AlignEscapedNewlines: Left
+AlignOperands: Align
+AlignTrailingComments: true
+AlwaysBreakAfterReturnType: None
+BinPackArguments: true
+BinPackParameters: true
+
+# --- Switch / case --------------------------------------------------------
+IndentCaseLabels: false
+
+# --- Comments / preprocessor ---------------------------------------------
+IndentPPDirectives: None
+SpaceBeforeAssignmentOperators: true
+
+# --- Misc -----------------------------------------------------------------
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+PenaltyBreakBeforeFirstCallParameter: 100
+PenaltyExcessCharacter: 100
+SortUsingDeclarations: false
+
+# Macros that introduce loops or expressions; keep them attached to
+# their argument list without inserting a space.
+ForEachMacros:
+  - 'list_for_each'
+  - 'list_for_each_safe'
+  - 'list_for_each_entry'
+  - 'list_for_each_entry_safe'
+  - 'INTP_FOREACH_BACKEND'
+  - 'INTP_FOREACH_PLUGIN'
+
+# Statement macros that should not be treated as function calls.
+StatementMacros:
+  - 'INTP_PLUGIN_DEFINE'
+  - 'INTP_BACKEND_REGISTER'

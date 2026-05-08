@@ -1,0 +1,80 @@
+name: Distro packaging
+description: Issue with `.deb`, `.rpm`, `PKGBUILD`, `APKBUILD`, Nix derivation, or PPA / COPR / AUR builds.
+title: "pkg(<distro>): <short summary>"
+labels: ["area/packaging", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For issues with how `intp` is packaged, builds, or installs on a
+        specific distribution.
+
+  - type: dropdown
+    id: distro
+    attributes:
+      label: Distribution
+      options:
+        - Debian (any)
+        - Ubuntu (any LTS)
+        - Fedora
+        - RHEL / CentOS Stream / AlmaLinux / Rocky
+        - Arch Linux
+        - Alpine Linux
+        - openSUSE
+        - Nix / NixOS
+        - Other (specify)
+    validations:
+      required: true
+
+  - type: input
+    id: distro-version
+    attributes:
+      label: Distro version
+      placeholder: e.g. Debian sid, Ubuntu 24.04, Fedora 41, Arch (rolling, kernel 6.12)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Package source
+      options:
+        - Personal PPA on Launchpad
+        - Debian unstable / testing / stable
+        - Ubuntu universe
+        - Fedora COPR / official
+        - AUR
+        - Alpine aports
+        - nixpkgs
+        - Built from source (`debuild` / `rpmbuild` / `makepkg` / `nix-build`)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase where it fails
+      options:
+        - Build
+        - Install
+        - Lintian / rpmlint / namcap / shellcheck
+        - First run on a fresh system
+        - Upgrade from a previous version
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Build log excerpt, lintian output, error message, etc.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect
+    validations:
+      required: true

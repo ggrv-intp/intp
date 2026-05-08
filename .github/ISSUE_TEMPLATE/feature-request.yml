@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a new capability for `intp` core, a new output format, or a new integration adapter.
+title: "feat: <short summary>"
+labels: ["kind/feat", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Before opening:** if your idea is *a new metric*, it almost
+        > certainly belongs in a plugin. Read [docs/PLUGINS.md](../../docs/PLUGINS.md)
+        > and consider whether you can prototype it as an out-of-tree
+        > plugin first; that path doesn't need a feature request, just
+        > a discussion.
+        >
+        > Use this template for things that touch the *core* binary,
+        > the public C API, an output format, or an in-tree integration
+        > adapter.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: |
+        Describe the user need first, the proposed change second.
+        "I cannot do X because Y" is more useful than "intp should add Z".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: |
+        Sketch what would be added or changed. Concrete is better than
+        abstract. Pseudocode / CLI mockup welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing" and "do this in a plugin instead".
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope impact
+      options:
+        - Plugin (out-of-tree)
+        - In-tree plugin (`src/plugins/`)
+        - In-tree backend (extends a core metric)
+        - Output format
+        - Integration adapter (`integrations/`)
+        - Core / public C API change
+        - Build dependency change
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I read CONTRIBUTING.md and understand the scope-discipline policy.
+          required: true
+        - label: If this is a *new metric*, I have justified why it belongs in core rather than a plugin.
+        - label: I am willing to help review the implementation.

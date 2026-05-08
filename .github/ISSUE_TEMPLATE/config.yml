@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or design discussion
+    url: https://github.com/ggrv-intp/intp/discussions
+    about: For questions, plugin ideas, integration brainstorms, and "is this a bug or expected" conversations, please use Discussions instead of Issues.
+  - name: Security vulnerability
+    url: https://github.com/ggrv-intp/intp/security/advisories/new
+    about: Please do not file public issues for security problems. Use GitHub Security Advisories (private) — see SECURITY.md for details.
+  - name: How to write a plugin
+    url: https://github.com/ggrv-intp/intp/blob/main/docs/PLUGINS.md
+    about: New metric ideas usually belong in a plugin, not in the core. Read the plugin guide first.

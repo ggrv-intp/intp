@@ -1,0 +1,82 @@
+name: Kernel compatibility
+description: `intp` fails or degrades on a specific kernel version, vendor patch series, or hardware platform.
+title: "kernel: <kernel version / platform> — <short summary>"
+labels: ["area/kernel-compat", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kernel evolution is the long pole for this project. Reports here
+        feed the kernel-compat matrix in
+        [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) and the
+        version notes in [VERSIONS.md](../../intp-comparison/VERSIONS.md)
+        of the comparison repo.
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel version
+      description: Output of `uname -r`. Include vendor-patched / distro-specific identifiers.
+      placeholder: e.g. 6.8.0-31-generic (Ubuntu), 6.12.7-200.fc41.x86_64 (Fedora), 6.6.59-1-MANJARO
+    validations:
+      required: true
+
+  - type: input
+    id: btf
+    attributes:
+      label: BTF availability
+      description: Run `ls /sys/kernel/btf/vmlinux 2>&1`. "Present" / "missing" is fine.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Hard failure (intp does not start / immediate exit)
+        - Backend(s) silently degrade (e.g. eBPF unavailable, perf_event_open EPERM)
+        - One or more metrics report 0 / NaN
+        - Cosmetic / log noise
+    validations:
+      required: true
+
+  - type: dropdown
+    id: vendor
+    attributes:
+      label: CPU vendor
+      multiple: true
+      options:
+        - Intel
+        - AMD
+        - ARM (Ampere / Graviton / Neoverse)
+        - RISC-V
+        - Other (specify)
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: What breaks
+      description: Output of `intp --print-schema` plus error messages.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Known workaround (if any)
+      description: |
+        e.g. "build with `--without-ebpf`", "running with `CAP_PERFMON` instead of root",
+        "downgrade the kernel-libbpf-version to X".
+
+  - type: input
+    id: comparison
+    attributes:
+      label: Reference behaviour in intp-comparison (if applicable)
+      description: |
+        If you've already tried the relevant variant in `intp-comparison`,
+        does it work there? Which variant?
+      placeholder: e.g. "v2 works on this kernel; v3 fails to load BPF program"

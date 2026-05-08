@@ -1,0 +1,70 @@
+# EditorConfig — https://editorconfig.org
+#
+# `intp` follows kernel-style C: 8-column hard tabs, 80-column lines.
+# Other file types use their ecosystem conventions.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# C / C++ — kernel style, hard tabs displayed as 8 columns.
+[*.{c,h}]
+indent_style = tab
+indent_size = 8
+max_line_length = 80
+
+# eBPF C programs share the same style as the rest of the C tree.
+[*.bpf.c]
+indent_style = tab
+indent_size = 8
+max_line_length = 100
+
+# Meson build files — Meson's own style is 4 spaces.
+[meson.build]
+indent_style = space
+indent_size = 4
+
+[meson_options.txt]
+indent_style = space
+indent_size = 4
+
+# Shell — POSIX/bash conventions.
+[*.{sh,bash}]
+indent_style = space
+indent_size = 4
+
+# Makefiles require tabs.
+[{Makefile,*.mk,*.make}]
+indent_style = tab
+indent_size = 8
+
+# YAML / JSON / TOML — 2 spaces by community convention.
+[*.{yml,yaml,json,toml}]
+indent_style = space
+indent_size = 2
+
+# Python — PEP 8.
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# Markdown — preserve trailing whitespace (line breaks).
+[*.md]
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 2
+
+# Debian packaging — leading whitespace is significant in some files.
+[debian/{control,changelog,copyright,rules}]
+indent_style = space
+indent_size = 4
+
+# bpftrace scripts.
+[*.bt]
+indent_style = space
+indent_size = 4

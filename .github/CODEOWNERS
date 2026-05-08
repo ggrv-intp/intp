@@ -1,0 +1,101 @@
+# CODEOWNERS — automatic review routing for `intp`.
+#
+# Format documented at:
+#   https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Review rule: every PR needs at least one approval from a code owner
+# of the touched area. Owners are also pinged automatically. The
+# authoritative roster is in /MAINTAINERS; this file routes reviews,
+# /MAINTAINERS records who can merge.
+#
+# Keep entries from most-general (top) to most-specific (bottom);
+# the last matching pattern wins.
+
+# --- Default owner --------------------------------------------------------
+*                                       @AndreSacilotto
+
+# --- Public API and ABI ---------------------------------------------------
+/include/intp/                          @AndreSacilotto
+/include/intp/plugin.h                  @AndreSacilotto
+/include/intp/schema.h                  @AndreSacilotto
+
+# --- Core / lib -----------------------------------------------------------
+/src/core/                              @AndreSacilotto
+/src/lib/                               @AndreSacilotto
+/src/cli/                               @AndreSacilotto
+
+# --- Backends -------------------------------------------------------------
+/src/backends/procfs/                   @AndreSacilotto
+/src/backends/perf_event/               @AndreSacilotto
+/src/backends/resctrl/                  @AndreSacilotto
+/src/backends/netlink/                  @AndreSacilotto
+/src/backends/ebpf/                     @AndreSacilotto
+
+# --- In-tree plugins ------------------------------------------------------
+/src/plugins/                           @AndreSacilotto
+/src/plugins/bpftrace/                  @AndreSacilotto
+/src/plugins/gpu-nvml/                  @AndreSacilotto
+/src/plugins/gpu-rocm/                  @AndreSacilotto
+/src/plugins/gpu-zes/                   @AndreSacilotto
+/src/plugins/db-postgres/               @AndreSacilotto
+/src/plugins/db-mysql/                  @AndreSacilotto
+/src/plugins/db-mongo/                  @AndreSacilotto
+/src/plugins/db-redis/                  @AndreSacilotto
+/src/plugins/db-vector/                 @AndreSacilotto
+
+# --- Output sinks ---------------------------------------------------------
+/src/output/                            @AndreSacilotto
+
+# --- IPC / streaming ------------------------------------------------------
+/src/ipc/                               @AndreSacilotto
+
+# --- Integrations (adapters) ---------------------------------------------
+/integrations/prometheus-exporter/      @AndreSacilotto
+/integrations/otel-collector-receiver/  @AndreSacilotto
+/integrations/k8s/                      @AndreSacilotto
+/integrations/iada/                     @AndreSacilotto
+/integrations/slurm/                    @AndreSacilotto
+/integrations/grafana/                  @AndreSacilotto
+/integrations/opentelemetry/            @AndreSacilotto
+
+# --- Bindings -------------------------------------------------------------
+/bindings/python/                       @AndreSacilotto
+/bindings/go/                           @AndreSacilotto
+/bindings/rust/                         @AndreSacilotto
+
+# --- Tests ----------------------------------------------------------------
+/tests/                                 @AndreSacilotto
+/tests/plugin-abi/                      @AndreSacilotto
+
+# --- Bench ----------------------------------------------------------------
+/bench/                                 @AndreSacilotto
+
+# --- Packaging ------------------------------------------------------------
+/packaging/debian/                      @AndreSacilotto
+/packaging/rpm/                         @AndreSacilotto
+/packaging/arch/                        @AndreSacilotto
+
+# --- Tooling --------------------------------------------------------------
+/tools/                                 @AndreSacilotto
+
+# --- Examples -------------------------------------------------------------
+/examples/                              @AndreSacilotto
+
+# --- Docs -----------------------------------------------------------------
+/docs/                                  @AndreSacilotto
+/docs/design/                           @AndreSacilotto
+
+# --- Build & CI -----------------------------------------------------------
+/meson.build                            @AndreSacilotto
+/meson_options.txt                      @AndreSacilotto
+/.github/workflows/                     @AndreSacilotto
+/.github/CODEOWNERS                     @AndreSacilotto
+
+# --- Top-level governance docs -------------------------------------------
+/MAINTAINERS                            @AndreSacilotto
+/GOVERNANCE.md                          @AndreSacilotto
+/CONTRIBUTING.md                        @AndreSacilotto
+/SECURITY.md                            @AndreSacilotto
+/CHANGELOG.md                           @AndreSacilotto
+/CITATION.cff                           @AndreSacilotto
+/code_of_conduct.txt                    @AndreSacilotto

@@ -1,0 +1,115 @@
+name: Metric fidelity regression
+description: A metric value differs significantly from the intp-comparison reference or from a previous intp release.
+title: "fidelity(<metric>): <short summary>"
+labels: ["kind/fidelity", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for cases where a metric value is *measurably
+        wrong* — it disagrees with the `intp-comparison` reference, with
+        an earlier `intp` release, or with the canonical formula in
+        [docs/METRICS.md](../../docs/METRICS.md).
+
+        For "the binary crashes" or "this option does the wrong thing",
+        use the regular *Bug report* template instead.
+
+  - type: dropdown
+    id: metric
+    attributes:
+      label: Affected metric
+      multiple: true
+      options:
+        - netp
+        - nets
+        - blk
+        - mbw
+        - llcmr
+        - llcocc
+        - cpu
+        - plugin-defined metric (specify below)
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-name
+    attributes:
+      label: Plugin name (if plugin-defined metric)
+      placeholder: e.g. gpu-nvml, db-postgres
+
+  - type: textarea
+    id: divergence
+    attributes:
+      label: Observed divergence
+      description: Concrete numbers. "Off by 30%" beats "looks wrong".
+      placeholder: |
+        Workload: stress-ng --vm 4 --vm-bytes 1G
+        intp 0.x reports mbw = 35
+        intp-comparison v2 reports mbw = 78
+        Reference (perf stat -e cas_count_*) gives mbw ≈ 80
+    validations:
+      required: true
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference / expected value source
+      description: |
+        Which is the ground truth? Pointers welcome.
+        Examples: intp-comparison `bench/results/...`, the formula in
+        METRICS-DEEP-DIVE.md, a `perf stat` invocation, a vendor doc.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: intp version
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel
+    validations:
+      required: true
+
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend the metric resolved to
+      options:
+        - procfs
+        - perf_event
+        - resctrl
+        - netlink
+        - ebpf
+        - bpftrace plugin
+        - plugin (specify)
+    validations:
+      required: true
+
+  - type: textarea
+    id: workload
+    attributes:
+      label: Reproducer workload
+      description: Exact `stress-ng`, `pgbench`, `iperf3`, `fio`, etc. command line.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: |
+        Hardware-detection output (`tools/intp-detect.sh`), `dmesg | grep -E 'intel_uncore|amd_uncore|resctrl'`,
+        or anything else that might explain the divergence.
