@@ -1,12 +1,8 @@
-<p align="center">
-  <img src="docs/images/intp.png" alt="intP — Linux interference profiler" width="380">
-</p>
+# intp
 
-<h1 align="center">intp</h1>
+<img src="docs/images/intp.png" alt="intP — Linux interference profiler" width="720">
 
-<p align="center">
-  <strong>Interference profiling. Precise observability. For Linux.</strong>
-</p>
+**Interference profiling. Precise observability. For Linux.**
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-public%20placeholder-yellow?style=flat-square">
