@@ -36,10 +36,14 @@ jobs:
             runner: ubuntu-24.04
             compiler: gcc
             ebpf: disabled
+          # Ubuntu 22.04 (jammy) ships libbpf 0.5.0; our minimum is
+          # 0.8 (per ADR-0003). LTS users on 22.04 build with
+          # --without-ebpf and get the pure-C path, which is exactly
+          # what this matrix cell exercises.
           - ubuntu: '22.04'
             runner: ubuntu-22.04
             compiler: gcc
-            ebpf: enabled
+            ebpf: disabled
     steps:
       - uses: actions/checkout@v4
 
