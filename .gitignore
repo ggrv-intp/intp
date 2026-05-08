@@ -1,55 +1,98 @@
-# Prerequisites
-*.d
+# =============================================================================
+# intp — .gitignore
+#
+# Forward-looking: the code that will land here is being designed in
+# ../intp-comparison and will most likely be a kernel-module-free C utility
+# (procfs/perf_event/resctrl) or an eBPF/CO-RE program with libbpf, plus a
+# Debian packaging layer for the PPA → official-package path.
+# =============================================================================
 
-# Object files
+# --- C / C++ build artifacts -------------------------------------------------
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
 *.a
-*.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
+*.la
 *.so
 *.so.*
-*.dylib
-
-# Executables
-*.exe
+*.d
+*.elf
 *.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+build/
+target/
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# --- eBPF / libbpf generated files -------------------------------------------
+# Skeletons produced by `bpftool gen skeleton` from .bpf.o
+*.skel.h
+*.bpf.o
+# vmlinux.h is normally regenerated from /sys/kernel/btf/vmlinux per build host
+vmlinux.h
 
-# Kernel Module Compile Results
+# --- Compiled intp binaries (created once Stage 2 of ROADMAP lands) ----------
+/intp
+/intp-*
+!/intp-*.md
+!/intp-*.1
+!/intp-*.cff
+
+# --- Kernel module residue (in case any SystemTap variant is vendored) -------
+*.ko
 *.mod*
 *.cmd
 .tmp_versions/
 modules.order
 Module.symvers
-Mkfile.old
 dkms.conf
 
-# debug information files
-*.dwo
+# --- Debian packaging artifacts (Stage 3 onwards) ----------------------------
+debian/files
+debian/*.debhelper
+debian/*.debhelper.log
+debian/*.substvars
+debian/.debhelper/
+debian/intp/
+debian/intp-*/
+debian/tmp/
+obj-*/
+*.deb
+*.ddeb
+*.dsc
+*.changes
+*.buildinfo
+*.upload
+*.orig.tar.*
+*.debian.tar.*
+
+# --- Python (orchestrator / helpers / tests) ---------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# --- Logs / benchmark output / runtime artifacts -----------------------------
+*.log
+/results/
+/bench-output/
+core
+core.*
+
+# --- Editor / IDE ------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS noise ----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# --- Backups -----------------------------------------------------------------
+*.bak
+*.bak.*
+*.orig
+*.pre-*.bak
