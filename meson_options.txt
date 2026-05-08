@@ -1,0 +1,74 @@
+# Build options for `intp`. Run `meson configure build` to see current
+# values; pass `-D<name>=<value>` to `meson setup` or `meson configure`
+# to change them.
+
+option(
+    'with_ebpf',
+    type: 'combo',
+    choices: ['auto', 'enabled', 'disabled'],
+    value: 'auto',
+    description: 'Build eBPF backends. "auto" enables them when libbpf is found.',
+)
+
+option(
+    'with_bpftrace',
+    type: 'boolean',
+    value: false,
+    description: 'Build the bpftrace research plugin (intp-plugin-bpftrace).',
+)
+
+option(
+    'with_gpu_nvml',
+    type: 'boolean',
+    value: false,
+    description: 'Build the NVIDIA GPU plugin (intp-plugin-gpu-nvml). Requires the NVML SDK.',
+)
+
+option(
+    'with_gpu_rocm',
+    type: 'boolean',
+    value: false,
+    description: 'Build the AMD GPU plugin (intp-plugin-gpu-rocm). Requires ROCm SMI.',
+)
+
+option(
+    'with_gpu_zes',
+    type: 'boolean',
+    value: false,
+    description: 'Build the Intel GPU plugin (intp-plugin-gpu-zes). Requires Level Zero Sysman.',
+)
+
+option(
+    'with_otel',
+    type: 'boolean',
+    value: false,
+    description: 'Build the OpenTelemetry OTLP output sink. Requires protobuf (and optionally grpc).',
+)
+
+option(
+    'with_prometheus',
+    type: 'boolean',
+    value: true,
+    description: 'Build the Prometheus exposition output sink. Requires libmicrohttpd for serve mode.',
+)
+
+option(
+    'with_tests',
+    type: 'boolean',
+    value: true,
+    description: 'Build the test suite.',
+)
+
+option(
+    'with_examples',
+    type: 'boolean',
+    value: false,
+    description: 'Build the programs under examples/.',
+)
+
+option(
+    'with_static',
+    type: 'boolean',
+    value: false,
+    description: 'Statically link libintp into the intp binary.',
+)

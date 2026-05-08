@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * intp/version.h — generated at build time from version.h.in.
+ * Do not edit the generated copy directly; edit the .in template.
+ */
+
+#ifndef INTP_VERSION_H
+#define INTP_VERSION_H
+
+#define INTP_VERSION         @INTP_VERSION@
+#define INTP_PREFIX          @INTP_PREFIX@
+
+#define INTP_HAVE_EBPF       @INTP_HAVE_EBPF@
+#define INTP_HAVE_BPFTRACE   @INTP_HAVE_BPFTRACE@
+#define INTP_HAVE_GPU_NVML   @INTP_HAVE_GPU_NVML@
+#define INTP_HAVE_GPU_ROCM   @INTP_HAVE_GPU_ROCM@
+#define INTP_HAVE_GPU_ZES    @INTP_HAVE_GPU_ZES@
+#define INTP_HAVE_OTEL       @INTP_HAVE_OTEL@
+#define INTP_HAVE_PROMETHEUS @INTP_HAVE_PROMETHEUS@
+
+#endif /* INTP_VERSION_H */
