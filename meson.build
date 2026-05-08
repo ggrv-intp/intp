@@ -119,6 +119,10 @@ intp_include = include_directories('include')
 subdir('src/lib')
 subdir('src/cli')
 
+if opt_examples
+        subdir('examples')
+endif
+
 # ---------------------------------------------------------------------------
 # pkg-config
 # ---------------------------------------------------------------------------
