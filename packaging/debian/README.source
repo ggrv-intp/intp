@@ -1,0 +1,71 @@
+intp source package — packaging notes for distro maintainers
+=============================================================
+
+Build system
+------------
+
+intp uses Meson (>= 0.61) + Ninja. The dh-meson buildsystem driver
+handles configure / build / install transparently; debian/rules
+overrides only the configure step to set distro-appropriate options.
+
+Optional features (controlled by Meson `-D...` flags) currently
+exercised by debian/rules:
+
+  -Dwith_ebpf=enabled       Build the eBPF backends. Requires
+                            libbpf-dev (>= 0.8) and clang at build
+                            time. Runtime falls back gracefully on
+                            kernels < 5.8 or hosts without BTF.
+
+  -Dwith_prometheus=true    Build the Prometheus exposition output.
+                            Pulls in libmicrohttpd-dev for serve
+                            mode.
+
+  -Dwith_tests=true         Build the test suite.
+                            `dh_auto_test` runs the default suite;
+                            the `live` suite (root + real kernel)
+                            is intentionally skipped in build chroots.
+
+  -Dwith_examples=false     Skip the examples/ tree (it's instructive
+                            for plugin authors but not appropriate
+                            to ship in the binary packages).
+
+Packaging shape
+---------------
+
+The base build produces five binary packages:
+
+  intp                     The CLI binary.
+  libintp1                 The shared library.
+  libintp-dev              Public headers + intp.pc.
+  intp-doc                 Architecture-independent doc tree.
+  intp-plugin-bpftrace     The bpftrace research plugin.
+
+Plugins live under /usr/lib/<triplet>/intp/plugins/ and are loaded
+at runtime by libintp's plugin loader. Out-of-tree plugins (third
+parties shipping intp-plugin-gpu-nvml, intp-plugin-db-postgres, …)
+follow the same install path and ABI version requirements.
+
+ABI stability
+-------------
+
+Pre-1.0 the libintp ABI is not stable; we bump SONAME freely.
+From intp 1.0 onwards the ABI freezes within a major version. The
+upstream CI runs abidiff on every PR; downstream packagers can
+trust SONAME bumps to mean what they say.
+
+Tests during build
+------------------
+
+The test suite is hermetic and does not require root, network, or
+real hardware. It exercises:
+
+  - libintp's public symbols (version, metric names, unit names).
+  - The plugin ABI contract (loads examples/plugin-hello-world via
+    dlopen and asserts descriptor fields).
+  - CLI smoke tests (--version / --help / --print-schema).
+
+Tests that *do* require a real kernel live under tests/integration/
+live/ and are gated behind the `live` Meson test suite; they are
+not run by debian/rules.
+
+ -- André Sacilotto Santos <sacilotto.andre@gmail.com>

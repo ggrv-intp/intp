@@ -1,0 +1,12 @@
+intp (0.1.0-1) UNRELEASED; urgency=medium
+
+  * Initial packaging skeleton (Stage 1.5 of upstream roadmap).
+  * Source-only — no binary release yet; the upstream code base is
+    still scaffolding and the binaries do not yet implement the
+    seven core metrics.
+  * The packaging shape (intp, libintp1, libintp-dev, intp-doc,
+    intp-plugin-bpftrace) is validated by CI's lintian gate so that
+    once Stage 2 of the roadmap lands, the move to a personal PPA
+    (Stage 4) is mechanical.
+
+ -- André Sacilotto Santos <sacilotto.andre@gmail.com>  Fri, 08 May 2026 00:00:00 +0000

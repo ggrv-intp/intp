@@ -1,0 +1,92 @@
+Source: intp
+Section: admin
+Priority: optional
+Maintainer: André Sacilotto Santos <sacilotto.andre@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ meson (>= 0.61),
+ ninja-build,
+ pkg-config,
+ gcc,
+ clang,
+ libbpf-dev (>= 0.8),
+ libelf-dev,
+ zlib1g-dev,
+ libmicrohttpd-dev,
+ python3,
+Standards-Version: 4.7.0
+Homepage: https://github.com/ggrv-intp/intp
+Vcs-Git: https://github.com/ggrv-intp/intp.git
+Vcs-Browser: https://github.com/ggrv-intp/intp
+Rules-Requires-Root: no
+
+Package: intp
+Architecture: any
+Multi-Arch: foreign
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libintp1 (= ${binary:Version}),
+Description: Linux interference profiler
+ intp measures cross-workload performance interference on Linux hosts.
+ It collects seven metrics — netp, nets, blk, mbw, llcmr, llcocc, cpu —
+ that together quantify how co-located workloads compete for CPU,
+ last-level cache, memory bandwidth, block I/O, and network resources.
+ .
+ This package contains the intp(1) command-line tool. The shared
+ library is in libintp1; development headers are in libintp-dev.
+
+Package: libintp1
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: Linux interference profiler — shared library
+ intp measures cross-workload performance interference on Linux hosts.
+ .
+ This package contains the libintp.so shared library used by the
+ intp(1) tool and by programs linking against the libintp public C API.
+
+Package: libintp-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends:
+ libintp1 (= ${binary:Version}),
+ ${misc:Depends},
+Description: Linux interference profiler — development files
+ intp measures cross-workload performance interference on Linux hosts.
+ .
+ This package contains the headers, pkg-config file, and other
+ resources needed to develop programs that link against libintp.
+
+Package: intp-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+Description: Linux interference profiler — documentation
+ Documentation for intp, the Linux interference profiler. Includes
+ the architecture overview, metric definitions, plugin author guide,
+ integration cookbook, and packaging notes.
+
+Package: intp-plugin-bpftrace
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ intp (= ${binary:Version}),
+ libintp1 (= ${binary:Version}),
+ bpftrace,
+Description: Linux interference profiler — bpftrace research plugin
+ Loads user-supplied bpftrace (.bt) scripts and publishes their output
+ as intp plugin-defined metrics. Useful for prototyping new probes
+ before promoting them to native eBPF or pure-C in-tree backends, and
+ as a lighter-weight alternative on hosts where the libbpf+clang
+ toolchain is unavailable.
+ .
+ This is a research/experimental plugin; not part of the default
+ install. See /usr/share/doc/intp-doc/PLUGINS.md for usage.

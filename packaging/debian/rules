@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+# debian/rules for intp.
+#
+# debhelper >= 13 with dh_auto_* drivers handles meson natively; the
+# rules file stays tiny. Override hooks below tweak the few details
+# that don't fall out of dh_auto_configure's defaults.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Default to enabling eBPF in distro packages; users on older kernels
+# get graceful runtime degradation per ADR-0003.
+INTP_MESON_OPTIONS = \
+    -Dwith_ebpf=enabled \
+    -Dwith_bpftrace=true \
+    -Dwith_prometheus=true \
+    -Dwith_tests=true \
+    -Dwith_examples=false \
+    -Dwith_static=false
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(INTP_MESON_OPTIONS)
+
+# meson test runs the default suite; live tests are opt-in and not run here.
+override_dh_auto_test:
+	dh_auto_test -- --print-errorlogs
+
+# Lintian guidance: hand off pristine binaries; symbol versions are
+# checked by abidiff in upstream CI rather than via debian/symbols.

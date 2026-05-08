@@ -1,0 +1,3 @@
+usr/include/intp/*.h
+usr/lib/*/libintp.so
+usr/lib/*/pkgconfig/intp.pc

@@ -118,6 +118,7 @@ intp_include = include_directories('include')
 
 subdir('src/lib')
 subdir('src/cli')
+subdir('src/plugins/bpftrace')
 
 if opt_examples
         subdir('examples')
