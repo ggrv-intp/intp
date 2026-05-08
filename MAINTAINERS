@@ -1,0 +1,27 @@
+# intp maintainers
+#
+# Format (one line per maintainer):
+#   Name <email> @github-handle [role] -- area
+#
+# Roles:
+#   lead       - benevolent dictator (Phase 0); tie-breaker (Phase 1+)
+#   maintainer - merge bit, reviews assigned PRs in their area
+#   emeritus   - past maintainer, kept for credit; no merge bit
+#
+# Areas (free-form, but please prefer:
+#   core, backend/procfs, backend/perf_event, backend/resctrl,
+#   backend/netlink, backend/ebpf, plugin-abi, output, ipc,
+#   packaging/debian, packaging/rpm, packaging/arch, packaging/alpine,
+#   docs, ci, bench
+#
+# Distro packagers and downstream tooling may parse this file. Keep
+# the format machine-friendly: one maintainer per line, no blank lines
+# inside the list, comments start with '#'.
+
+André Sacilotto Santos <sacilotto.andre@gmail.com> @AndreSacilotto [lead] -- core, backend/*, plugin-abi, output, packaging/debian, docs
+
+# Open positions (apply via a PR adding yourself + a few months of contributions):
+# - backend/ebpf maintainer
+# - packaging/rpm maintainer
+# - packaging/arch maintainer
+# - integrations/k8s maintainer

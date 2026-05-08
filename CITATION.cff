@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "intp — Linux Interference Profiler"
+abstract: >
+  intp is a Linux interference profiler that collects seven metrics —
+  netp, nets, blk, mbw, llcmr, llcocc, cpu — from the Linux kernel and
+  hardware counters to quantify how co-located workloads interfere
+  through shared CPU, last-level cache, memory bandwidth, block I/O, and
+  network resources. It is the production successor to the seven-way
+  comparison harness in intp-comparison, packaged for distro adoption
+  and built around a stable plugin ABI for hardware (GPU, accelerator),
+  application (database, vector store), observability (Prometheus, OTel),
+  and scheduler (Kubernetes, SLURM, IADA) extensions.
+authors:
+  - family-names: "Sacilotto"
+    given-names: "André"
+    affiliation: "PPGCC/PUCRS"
+    orcid: "https://orcid.org/0000-0002-1639-3238"
+repository-code: "https://github.com/ggrv-intp/intp"
+license: MIT
+type: software
+keywords:
+  - interference profiling
+  - Linux kernel
+  - eBPF
+  - perf_event
+  - resctrl
+  - performance monitoring
+  - cloud computing
+  - observability
+version: "0.1.0-dev"
+# 1.0.0 is reserved for the first stable, distro-packageable release.
+# Until then, citing the comparison repo (intp-comparison) remains the
+# canonical reference. The MsC dissertation (defense expected March 2027)
+# will become the academic citation once published:
+# preferred-citation:
+#   type: thesis
+#   title: "REFACTORING INTP FOR MODERN LINUX KERNELS:
+#    A COMPARATIVE ANALYSIS OF INSTRUMENTATION
+#    APPROACHES FOR INTERFERENCE PROFILING"
+#   authors:
+#     - family-names: "Sacilotto"
+#       given-names: "André"
+#   institution:
+#     name: "PUCRS"
+#   year: 2027
+references:
+  - type: article
+    title: "IntP: Quantifying Cross-Application Interference via System-Level Instrumentation"
+    authors:
+      - family-names: "Xavier"
+        given-names: "Miguel G."
+      - family-names: "De Rose"
+        given-names: "Cesar A. F."
+    conference:
+      name: "SBAC-PAD 2022"
+    year: 2022
+    publisher:
+      name: "IEEE"
