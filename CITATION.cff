@@ -60,7 +60,7 @@ references:
     month: 11
     start: 221
     end: 230
-    # doi: "10.1109/SBAC-PAD…"  # paste from the IEEE Xplore page
+    doi: "10.1109/SBAC-PAD55451.2022.00034"
     publisher:
       name: "IEEE"
     url: "https://ieeexplore.ieee.org/document/9980934/"
