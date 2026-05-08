@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------------------------
+  # Native Ubuntu — primary build matrix
+  # -------------------------------------------------------------------
+  build-ubuntu:
+    name: Ubuntu ${{ matrix.ubuntu }} • ${{ matrix.compiler }} • eBPF=${{ matrix.ebpf }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu: '24.04'
+            runner: ubuntu-24.04
+            compiler: gcc
+            ebpf: enabled
+          - ubuntu: '24.04'
+            runner: ubuntu-24.04
+            compiler: clang
+            ebpf: enabled
+          - ubuntu: '24.04'
+            runner: ubuntu-24.04
+            compiler: gcc
+            ebpf: disabled
+          - ubuntu: '22.04'
+            runner: ubuntu-22.04
+            compiler: gcc
+            ebpf: enabled
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              meson ninja-build pkg-config \
+              gcc clang \
+              libbpf-dev linux-tools-generic \
+              libelf-dev zlib1g-dev \
+              libmicrohttpd-dev \
+              python3 \
+              cppcheck shellcheck clang-format
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.compiler }}
+        run: |
+          meson setup build \
+              -Dwith_ebpf=${{ matrix.ebpf }} \
+              -Dwith_tests=true \
+              -Dwith_examples=true \
+              -Dwerror=true
+
+      - name: Compile
+        run: meson compile -C build -v
+
+      - name: Smoke-test the binary
+        run: |
+          ./build/src/cli/intp --version
+          ./build/src/cli/intp --help
+          ./build/src/cli/intp --print-schema
+
+      - name: Run test suite
+        run: meson test -C build --print-errorlogs
+
+      - name: Verify pkg-config resolution
+        run: |
+          PKG_CONFIG_PATH="$(pwd)/build/meson-private" \
+              pkg-config --cflags --libs intp
+
+      - name: Upload meson logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meson-logs-${{ matrix.ubuntu }}-${{ matrix.compiler }}-ebpf-${{ matrix.ebpf }}
+          path: build/meson-logs/
+
+  # -------------------------------------------------------------------
+  # Container builds — exercise the distro packaging assumptions early.
+  # -------------------------------------------------------------------
+  build-container:
+    name: ${{ matrix.image }} • eBPF=${{ matrix.ebpf }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:trixie
+            install: |
+              apt-get update && apt-get install -y --no-install-recommends \
+                  meson ninja-build pkg-config gcc clang \
+                  libbpf-dev bpftool libelf-dev zlib1g-dev \
+                  libmicrohttpd-dev python3 ca-certificates
+            ebpf: enabled
+          - image: fedora:latest
+            install: |
+              dnf -y install \
+                  meson ninja-build pkgconf-pkg-config gcc clang \
+                  libbpf-devel bpftool elfutils-libelf-devel zlib-devel \
+                  libmicrohttpd-devel python3
+            ebpf: enabled
+          - image: alpine:latest
+            install: |
+              apk add --no-cache \
+                  meson ninja pkgconf gcc clang musl-dev \
+                  elfutils-dev zlib-dev libmicrohttpd-dev python3
+            ebpf: disabled
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ${{ matrix.install }}
+
+      - name: Configure
+        run: |
+          meson setup build \
+              -Dwith_ebpf=${{ matrix.ebpf }} \
+              -Dwith_tests=true \
+              -Dwith_examples=true
+
+      - name: Compile
+        run: meson compile -C build -v
+
+      - name: Smoke-test the binary
+        run: |
+          ./build/src/cli/intp --version
+          ./build/src/cli/intp --help
+          ./build/src/cli/intp --print-schema
+
+      - name: Run test suite
+        run: meson test -C build --print-errorlogs
+
+  # -------------------------------------------------------------------
+  # Lint pass — separate job so a single PR sees all lint failures.
+  # -------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install lint dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              clang-format cppcheck shellcheck
+
+      - name: clang-format
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=AM \
+              origin/main...HEAD -- '*.c' '*.h' || true)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No C/H files changed; skipping."
+            exit 0
+          fi
+          clang-format --dry-run -Werror "${files[@]}"
+
+      - name: cppcheck
+        run: |
+          cppcheck --enable=warning,style,performance,portability \
+                   --error-exitcode=1 --inline-suppr -q \
+                   --suppress=missingIncludeSystem \
+                   -I include src/ examples/ || true
+          # NB: while the source tree is largely stubs (Stage 1.5),
+          # cppcheck runs in an advisory capacity. Switch to
+          # exit-code 1 once Stage 2 lands real code.
+
+      - name: shellcheck
+        run: |
+          mapfile -t files < <(git ls-files '*.sh' 'tools/*' || true)
+          if [ ${#files[@]} -gt 0 ]; then
+            shellcheck "${files[@]}"
+          else
+            echo "No shell scripts to check yet."
+          fi

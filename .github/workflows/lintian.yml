@@ -1,0 +1,80 @@
+name: Debian packaging (lintian)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packaging/debian/**'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - '.github/workflows/lintian.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-deb:
+    name: debuild + lintian on debian:trixie
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install Debian build tooling
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+              build-essential debhelper devscripts dh-make fakeroot \
+              lintian git ca-certificates \
+              meson ninja-build pkg-config clang \
+              libbpf-dev libelf-dev zlib1g-dev libmicrohttpd-dev \
+              python3
+
+      - uses: actions/checkout@v4
+
+      - name: Bail out cleanly if packaging/ is not present yet
+        id: precheck
+        run: |
+          if [ ! -d packaging/debian ]; then
+            echo "packaging/debian/ does not exist yet (Step 8 of the scaffold)."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Stage debian/ at the source root
+        if: steps.precheck.outputs.skipped != 'true'
+        run: |
+          cp -r packaging/debian debian
+          # debuild needs orig tarball-ish layout; we let dpkg-source
+          # operate on the local tree directly.
+          dpkg-checkbuilddeps debian/control || true
+
+      - name: Build the package
+        if: steps.precheck.outputs.skipped != 'true'
+        env:
+          DEB_BUILD_OPTIONS: 'nocheck'
+        run: |
+          dpkg-buildpackage -us -uc -b -d
+          ls -l ../*.deb || true
+
+      - name: Run lintian
+        if: steps.precheck.outputs.skipped != 'true'
+        run: |
+          # Run lintian on every produced .deb. Failing on errors only;
+          # warnings surface in the log but don't block.
+          status=0
+          for d in ../*.deb; do
+            echo "::group::lintian $(basename "$d")"
+            lintian --info --display-info --display-experimental \
+                    --fail-on error -- "$d" || status=$?
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Upload lintian artefacts on failure
+        if: failure() && steps.precheck.outputs.skipped != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs
+          path: ../*.deb

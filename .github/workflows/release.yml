@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # -------------------------------------------------------------------
+  # Build static binaries for x86_64 and aarch64.
+  # -------------------------------------------------------------------
+  binaries:
+    name: Static binary (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: ubuntu-24.04
+            cross_file: ''
+          - arch: aarch64-linux
+            runner: ubuntu-24.04-arm
+            cross_file: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              meson ninja-build pkg-config gcc clang \
+              libbpf-dev bpftool libelf-dev zlib1g-dev \
+              libmicrohttpd-dev python3
+
+      - name: Configure (static)
+        run: |
+          meson setup build \
+              --buildtype=release \
+              --prefix=/usr \
+              -Dwith_ebpf=enabled \
+              -Dwith_static=true \
+              -Dwith_tests=false \
+              -Dwith_examples=false
+
+      - name: Compile
+        run: meson compile -C build -v
+
+      - name: Smoke-test
+        run: |
+          ./build/src/cli/intp --version
+          ./build/src/cli/intp --print-schema
+
+      - name: Stage release artefact
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p "intp-${version}-${{ matrix.arch }}"
+          cp build/src/cli/intp "intp-${version}-${{ matrix.arch }}/"
+          cp LICENSE README.md "intp-${version}-${{ matrix.arch }}/"
+          tar -czf "intp-${version}-${{ matrix.arch }}.tar.gz" \
+              "intp-${version}-${{ matrix.arch }}/"
+          sha256sum "intp-${version}-${{ matrix.arch }}.tar.gz" \
+              > "intp-${version}-${{ matrix.arch }}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: |
+            intp-*.tar.gz
+            intp-*.tar.gz.sha256
+
+  # -------------------------------------------------------------------
+  # Source tarball (for distro packagers and reproducible builds).
+  # -------------------------------------------------------------------
+  source-tarball:
+    name: Source tarball
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              meson ninja-build
+
+      - name: Generate dist tarball
+        run: |
+          meson setup build -Dwith_ebpf=disabled -Dwith_tests=false
+          meson dist -C build --no-tests --formats gztar
+          mv build/meson-dist/*.tar.gz .
+          for f in *.tar.gz; do
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+
+  # -------------------------------------------------------------------
+  # Publish — collect every artefact and create the GitHub release.
+  # -------------------------------------------------------------------
+  publish:
+    name: Publish release
+    needs: [binaries, source-tarball]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts/
+
+      - name: Move artefacts to flat directory
+        run: |
+          mkdir -p release
+          find artefacts -type f \( -name '*.tar.gz' -o -name '*.sha256' \) \
+              -exec cp {} release/ \;
+          ls -l release/
+
+      - name: Extract changelog entry for this tag
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Pull the section between `## [version]` and the next `## ` header.
+          awk -v v="$version" '
+              $0 ~ "^## \\[" v "\\]" { in_block=1; next }
+              in_block && /^## / { exit }
+              in_block { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No changelog entry for ${version}; using a default note." >&2
+            printf "Release %s.\n" "$version" > release-notes.md
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: intp ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release/*.tar.gz
+            release/*.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

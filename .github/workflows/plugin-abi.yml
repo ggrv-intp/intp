@@ -1,0 +1,128 @@
+name: Plugin ABI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'include/intp/plugin.h'
+      - 'include/intp/intp.h'
+      - 'include/intp/metrics.h'
+      - 'include/intp/schema.h'
+      - 'src/lib/**'
+      - 'src/core/**'
+      - '.github/workflows/plugin-abi.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: plugin-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  abidiff:
+    name: ABI diff vs. baseline
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              meson ninja-build pkg-config gcc clang \
+              libbpf-dev libelf-dev zlib1g-dev libmicrohttpd-dev \
+              libabigail abigail-tools python3
+
+      - name: Resolve baseline ref
+        id: baseline
+        run: |
+          # Use the latest tag if any exists, otherwise compare against
+          # the merge base with main. Pre-1.0 we accept "no baseline yet".
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            base="$(git describe --tags --abbrev=0)"
+          else
+            base="$(git merge-base HEAD origin/main)"
+          fi
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
+          echo "Baseline ref: $base"
+
+      - name: Build current PR
+        run: |
+          meson setup build-pr -Dwith_ebpf=disabled -Dwith_tests=false
+          meson compile -C build-pr
+
+      - name: Dump current ABI
+        run: |
+          abidw --out-file abi-pr.xml \
+                --headers-dir include \
+                build-pr/src/lib/libintp.so* || true
+          ls -l abi-pr.xml
+
+      - name: Build baseline
+        run: |
+          git worktree add baseline ${{ steps.baseline.outputs.ref }}
+          (cd baseline &&
+           meson setup ../build-base -Dwith_ebpf=disabled -Dwith_tests=false &&
+           meson compile -C ../build-base)
+
+      - name: Dump baseline ABI
+        run: |
+          abidw --out-file abi-base.xml \
+                --headers-dir baseline/include \
+                build-base/src/lib/libintp.so* || true
+
+      - name: Run abidiff
+        id: diff
+        run: |
+          set +e
+          abidiff --no-added-syms abi-base.xml abi-pr.xml \
+              | tee abidiff.out
+          rc=${PIPESTATUS[0]}
+          set -e
+          # abidiff exit codes: 0 = no diff; 4 = compatible diff; 8 = ABI break.
+          # Pre-1.0 we report but don't block on `8`. Once 1.0 ships, set
+          # `block_break=true` and fail the job on rc=8.
+          if [ "$rc" = "0" ]; then
+            echo "result=no-changes" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" = "4" ]; then
+            echo "result=compatible" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" = "8" ]; then
+            echo "result=incompatible" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=error-rc-$rc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment ABI summary on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const result = '${{ steps.diff.outputs.result }}';
+            let body = `### Plugin ABI check\n\nResult: \`${result}\`\n\n`;
+            if (fs.existsSync('abidiff.out')) {
+              const out = fs.readFileSync('abidiff.out', 'utf8').slice(0, 60000);
+              if (out.trim().length > 0) {
+                body += '<details><summary>abidiff output</summary>\n\n```\n' +
+                        out + '\n```\n\n</details>\n';
+              }
+            }
+            const { owner, repo } = context.repo;
+            await github.rest.issues.createComment({
+              owner, repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail on incompatible break (post-1.0 only)
+        if: steps.diff.outputs.result == 'incompatible'
+        run: |
+          if [ -f .github/abi-policy.txt ] && grep -q '^block_break=true' .github/abi-policy.txt; then
+            echo "ABI break detected and policy blocks merging; failing."
+            exit 1
+          fi
+          echo "ABI break detected; pre-1.0 policy logs and continues."
