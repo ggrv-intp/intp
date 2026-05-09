@@ -205,6 +205,57 @@ int intp_print_schema(struct intp_ctx *ctx, int fd);
  */
 const char *intp_strerror(int err);
 
+/* ------------------------------------------------------------------------ */
+/* Runtime compatibility probes                                              */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * enum intp_probe_result — outcome of a runtime capability probe.
+ *
+ * Exposed so that callers can distinguish "this kernel can't do it" from
+ * "this process isn't permitted to do it" — those need different
+ * remediation (kernel upgrade vs. CAP_BPF / sysctl tuning).
+ */
+enum intp_probe_result {
+	INTP_PROBE_OK = 0,
+	INTP_PROBE_UNSUPPORTED,		/* feature not built into libintp */
+	INTP_PROBE_KERNEL_TOO_OLD,	/* kernel lacks the required surface */
+	INTP_PROBE_NOT_PERMITTED,	/* CAP_BPF / CAP_PERFMON / equivalent missing */
+	INTP_PROBE_ERROR,		/* probe itself failed; check errno */
+};
+
+/**
+ * intp_probe_ebpf — check whether the eBPF backends will work on this host.
+ *
+ * Lightweight probe: asks libbpf whether the kernel accepts a kprobe-type
+ * BPF program. Does NOT load any persistent program or attach to anything.
+ * Safe to call as an unprivileged user; returns INTP_PROBE_NOT_PERMITTED
+ * in that case.
+ *
+ * Returns INTP_PROBE_UNSUPPORTED if libintp was built with
+ * -Dwith_ebpf=disabled (i.e. without libbpf at all).
+ */
+enum intp_probe_result intp_probe_ebpf(void);
+
+/* ------------------------------------------------------------------------ */
+/* Output sinks                                                              */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * intp_serve_prometheus — start the Prometheus exposition HTTP server.
+ *
+ * Binds 0.0.0.0:port and serves /metrics in the standard Prometheus text
+ * format. Blocks until SIGINT/SIGTERM, then returns 0.
+ *
+ * In the placeholder phase the metric values are zeros and a top-level
+ * intp_metrics_implemented gauge advertises 0/7. Stage 2 wires the live
+ * sampling loop into the same endpoint with no API change.
+ *
+ * Returns 0 on clean shutdown, negative errno on bind/start failure, and
+ * -ENOSYS if libintp was built with -Dwith_prometheus=false.
+ */
+int intp_serve_prometheus(uint16_t port);
+
 #ifdef __cplusplus
 }
 #endif

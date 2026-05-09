@@ -1,3 +1,27 @@
+intp (0.2.0~placeholder-1) noble; urgency=low
+
+  * Add intp_probe_ebpf() public API + `intp --probe` CLI command:
+    asks libbpf whether the kernel accepts a kprobe-type BPF program
+    and reports OK / kernel-too-old / not-permitted / unsupported.
+    Loads no persistent program; safe for unprivileged callers.
+    Pulls libbpf into libintp1's runtime Depends (auto-resolved by
+    dh_shlibdeps).
+  * Add intp_serve_prometheus() public API + `intp --serve` CLI mode:
+    libmicrohttpd-based HTTP server that exposes /metrics in the
+    canonical Prometheus text format. The seven core metrics are
+    exposed with placeholder zero values and status="placeholder";
+    intp_metrics_implemented advertises 0 to make the half-built
+    state legible to scrapers. Stage 2 wires the live sampling loop
+    into the same endpoint with no API change. Pulls libmicrohttpd
+    into libintp1's runtime Depends.
+  * Bump upstream version to 0.2.0 to reflect the API additions
+    (backward-compatible; SONAME stays libintp.so.0).
+  * No metric collection logic added — variant selection between v2
+    (pure-C) and v3 (eBPF/CO-RE) remains a Stage 1 decision in
+    `intp-comparison`.
+
+ -- André Sacilotto Santos <sacilotto.andre@gmail.com>  Sat, 09 May 2026 17:00:00 +0000
+
 intp (0.1.0~placeholder2-1) noble; urgency=low
 
   * Re-upload after orig tarball regeneration. The previous

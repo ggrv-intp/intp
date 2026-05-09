@@ -11,6 +11,7 @@
  * the binary can do, a linked program can also do via <intp/intp.h>.
  */
 
+#include <errno.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +38,12 @@ static const char usage_text[] =
 "Output:\n"
 "  -f, --format FORMAT        jsonl (default), tsv-legacy-v1, prometheus, otlp\n"
 "      --print-schema         dump active schema as JSON Schema and exit\n"
-"      --serve [proto://addr] long-running mode (Prometheus / gRPC / OTLP)\n"
+"      --serve[=URI]          long-running exposition mode (Prometheus on :9100)\n"
+"                             URI examples: prometheus  prometheus://:9090\n"
+"                             (note: must use --serve=URI, not --serve URI)\n"
+"\n"
+"Diagnostics:\n"
+"      --probe                check whether eBPF backends will work here\n"
 "\n"
 "Plugins:\n"
 "      --plugin-dir DIR       additional plugin search directory\n"
@@ -122,6 +128,7 @@ enum {
 	OPT_DISABLE_PLUGIN,
 	OPT_DISABLE_BACKEND,
 	OPT_SERVE,
+	OPT_PROBE,
 };
 
 static const struct option long_opts[] = {
@@ -139,8 +146,92 @@ static const struct option long_opts[] = {
 	{ "disable-plugin", required_argument, NULL, OPT_DISABLE_PLUGIN },
 	{ "disable-backend", required_argument, NULL, OPT_DISABLE_BACKEND },
 	{ "serve",          optional_argument, NULL, OPT_SERVE },
+	{ "probe",          no_argument,       NULL, OPT_PROBE },
 	{ NULL, 0, NULL, 0 },
 };
+
+/* Run intp_probe_ebpf() and write a one-line human-readable status.
+ * Exit code semantics let scripts branch on the failure mode:
+ *   0  ok                      eBPF will work
+ *   2  kernel too old          host needs an upgrade
+ *   3  not permitted           process needs CAP_BPF / CAP_SYS_ADMIN
+ *   4  unsupported             libintp built without eBPF
+ *   5  error                   probe itself failed (see errno) */
+static int run_probe_ebpf(void)
+{
+	enum intp_probe_result r = intp_probe_ebpf();
+	switch (r) {
+	case INTP_PROBE_OK:
+		printf("intp probe: eBPF backends OK\n");
+		return 0;
+	case INTP_PROBE_KERNEL_TOO_OLD:
+		printf("intp probe: eBPF UNAVAILABLE — kernel lacks BPF program support (need 5.8+)\n");
+		return 2;
+	case INTP_PROBE_NOT_PERMITTED:
+		printf("intp probe: eBPF UNAVAILABLE — caller lacks CAP_BPF or CAP_SYS_ADMIN\n");
+		return 3;
+	case INTP_PROBE_UNSUPPORTED:
+		printf("intp probe: eBPF UNAVAILABLE — this build was compiled without libbpf\n");
+		return 4;
+	case INTP_PROBE_ERROR:
+	default:
+		printf("intp probe: eBPF UNKNOWN — probe failed (errno %d: %s)\n",
+		       errno, strerror(errno));
+		return 5;
+	}
+}
+
+/* Parse `--serve [arg]` argument, where arg is one of:
+ *   (empty)                       → prometheus on 9100
+ *   "prometheus"                  → prometheus on 9100
+ *   "prometheus://[host:]port"    → prometheus on the given port
+ *   anything else                 → not yet implemented (returns 2)
+ *
+ * Host part is currently ignored; libmicrohttpd binds 0.0.0.0. Stage 2
+ * will introduce an explicit address-binding option. */
+static int run_serve(const char *arg)
+{
+	const char *proto = arg ? arg : "prometheus";
+	uint16_t port = 9100;
+
+	if (strncmp(proto, "prometheus", 10) != 0) {
+		fprintf(stderr,
+			"intp: --serve %s is not yet implemented in this build.\n"
+			"      Supported: --serve prometheus[://[host:]port] (default :9100)\n",
+			proto);
+		return 2;
+	}
+
+	const char *rest = proto + 10;
+	if (*rest == ':' && rest[1] == '/' && rest[2] == '/') {
+		rest += 3;
+		const char *colon = strrchr(rest, ':');
+		if (colon) {
+			long p = strtol(colon + 1, NULL, 10);
+			if (p > 0 && p <= 65535)
+				port = (uint16_t)p;
+		}
+	} else if (*rest != '\0') {
+		fprintf(stderr, "intp: malformed --serve argument: %s\n", proto);
+		return 2;
+	}
+
+	fprintf(stderr,
+		"intp: serving Prometheus exposition on :%u (Stage 1.5 placeholder values).\n"
+		"intp: scrape http://localhost:%u/metrics ; SIGINT to stop.\n",
+		port, port);
+
+	int rc = intp_serve_prometheus(port);
+	if (rc == -ENOSYS) {
+		fprintf(stderr, "intp: --serve prometheus unavailable: built with -Dwith_prometheus=false.\n");
+		return 4;
+	}
+	if (rc < 0) {
+		fprintf(stderr, "intp: prometheus server failed: %s\n", strerror(-rc));
+		return 1;
+	}
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -158,6 +249,10 @@ int main(int argc, char *argv[])
 		case OPT_PRINT_SCHEMA:
 			print_schema_static();
 			return 0;
+		case OPT_PROBE:
+			return run_probe_ebpf();
+		case OPT_SERVE:
+			return run_serve(optarg);
 		case 'p':
 		case 'c':
 		case 'i':
@@ -168,11 +263,11 @@ int main(int argc, char *argv[])
 		case OPT_ENABLE_PLUGIN:
 		case OPT_DISABLE_PLUGIN:
 		case OPT_DISABLE_BACKEND:
-		case OPT_SERVE:
 			fprintf(stderr,
 				"intp: option not yet implemented in this scaffold build.\n"
 				"      Stage 2 of the roadmap will wire it up.\n"
-				"      Run `intp --version` or `intp --print-schema` for now.\n");
+				"      Run `intp --version`, `intp --print-schema`, `intp --probe`,\n"
+				"      or `intp --serve` for now.\n");
 			return 2;
 		default:
 			fprintf(stderr, "Try 'intp --help' for usage.\n");
@@ -186,7 +281,9 @@ int main(int argc, char *argv[])
 		"Real sampling lands in Stage 2; for now try:\n"
 		"    intp --version\n"
 		"    intp --help\n"
-		"    intp --print-schema\n",
+		"    intp --print-schema\n"
+		"    intp --probe\n"
+		"    intp --serve\n",
 		intp_version_string());
 	return 0;
 }
