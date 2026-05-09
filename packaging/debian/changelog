@@ -1,12 +1,24 @@
-intp (0.1.0-1) UNRELEASED; urgency=medium
+intp (0.1.0~placeholder2-1) noble; urgency=low
 
-  * Initial packaging skeleton (Stage 1.5 of upstream roadmap).
-  * Source-only — no binary release yet; the upstream code base is
-    still scaffolding and the binaries do not yet implement the
-    seven core metrics.
-  * The packaging shape (intp, libintp1, libintp-dev, intp-doc,
-    intp-plugin-bpftrace) is validated by CI's lintian gate so that
-    once Stage 2 of the roadmap lands, the move to a personal PPA
-    (Stage 4) is mechanical.
+  * Re-upload after orig tarball regeneration. The previous
+    0.1.0~placeholder-1 orig tarball was created with `git archive`
+    run from a subdirectory, which (via cwd-relative pathspec
+    matching) captured only packaging/debian/* instead of the full
+    upstream tree, so Launchpad's meson configure step found no
+    meson.build at the source root.
+  * No upstream code changes; this is a pure re-roll of the source
+    tarball.
 
- -- André Sacilotto Santos <sacilotto.andre@gmail.com>  Fri, 08 May 2026 00:00:00 +0000
+ -- André Sacilotto Santos <sacilotto.andre@gmail.com>  Sat, 09 May 2026 13:30:00 +0000
+
+intp (0.1.0~placeholder-1) noble; urgency=low
+
+  * Placeholder upload to exercise the Launchpad PPA build pipeline.
+    No metrics are implemented yet; the upstream source is at the
+    scaffolding stage (roadmap Stage 1.5 — variant selection still
+    ongoing in https://github.com/ggrv-intp/intp-comparison).
+  * Packaging shape validated by CI lintian gate: intp, libintp1,
+    libintp-dev, intp-doc, intp-plugin-bpftrace.
+  * This entry will be replaced by 0.1.0-1 once Stage 2 lands.
+
+ -- André Sacilotto Santos <sacilotto.andre@gmail.com>  Fri, 09 May 2026 12:00:00 +0000
