@@ -96,3 +96,4 @@ Thumbs.db
 *.bak.*
 *.orig
 *.pre-*.bak
+.claude/settings.local.json
