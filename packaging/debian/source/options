@@ -1,6 +1,10 @@
 # Paths that exist in developer working trees but should never
 # influence the source package. Without this, dpkg-source aborts with
-# "unexpected upstream changes" when these files are present in cwd
-# but not in the orig tarball (gitignore alone is not enough since
-# dpkg-source doesn't read .gitignore).
-extend-diff-ignore = "^\.claude/"
+# "unexpected upstream changes" or "cannot represent change" when these
+# files are present in cwd but not in the orig tarball (gitignore alone
+# is not enough; dpkg-source doesn't read .gitignore).
+#
+#   .claude/    Claude Code per-project local settings
+#   build/      meson out-of-tree build directory (binaries, .ninja_deps,
+#               compiler probe artefacts — none of it source)
+extend-diff-ignore = "^(\.claude|build)/"
