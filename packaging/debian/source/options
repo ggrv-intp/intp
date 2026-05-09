@@ -1,0 +1,6 @@
+# Paths that exist in developer working trees but should never
+# influence the source package. Without this, dpkg-source aborts with
+# "unexpected upstream changes" when these files are present in cwd
+# but not in the orig tarball (gitignore alone is not enough since
+# dpkg-source doesn't read .gitignore).
+extend-diff-ignore = "^\.claude/"
